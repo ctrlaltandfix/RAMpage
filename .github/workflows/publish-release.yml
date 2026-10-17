@@ -45,6 +45,14 @@ jobs:
           sha256sum -c "RAMpage-Setup-$V.exe.sha256"
           ls -l "RAMpage-Setup-$V.exe"
 
+      - name: Remove superseded releases
+        if: steps.meta.outputs.ready == 'true'
+        run: |
+          for TAG in $(jq -r '.remove // [] | .[]' staging/release.json); do
+            echo "Removing $TAG"
+            gh release delete "$TAG" --cleanup-tag --yes || true
+          done
+
       - name: Publish the release
         if: steps.meta.outputs.ready == 'true'
         run: |
