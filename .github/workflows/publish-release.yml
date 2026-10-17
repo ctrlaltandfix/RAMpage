@@ -1,0 +1,64 @@
+# Publishes a RAMpage release from files staged on the `release-staging` branch.
+# The installer is uploaded in parts (GitHub's 100 MB file limit), reassembled here,
+# checked against its SHA-256, published as a release, and the staging branch is removed.
+name: Publish RAMpage release
+
+on:
+  push:
+    branches: [release-staging]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release-staging
+
+      - name: Check the upload is complete
+        id: meta
+        run: |
+          if [ ! -f staging/release.json ]; then
+            echo "Still uploading parts — nothing to publish yet."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r .version staging/release.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Reassemble and verify the installer
+        if: steps.meta.outputs.ready == 'true'
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          cat $(ls staging/RAMpage-Setup-$V.exe.part* | sort) > "RAMpage-Setup-$V.exe"
+          cp "staging/RAMpage-Setup-$V.exe.sha256" .
+          sha256sum -c "RAMpage-Setup-$V.exe.sha256"
+          ls -l "RAMpage-Setup-$V.exe"
+
+      - name: Publish the release
+        if: steps.meta.outputs.ready == 'true'
+        run: |
+          V="${{ steps.meta.outputs.version }}"
+          FILES="RAMpage-Setup-$V.exe RAMpage-Setup-$V.exe.sha256"
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release upload "v$V" $FILES --clobber
+            gh release edit "v$V" --notes-file staging/notes.md
+          else
+            gh release create "v$V" $FILES --title "RAMpage $V" --notes-file staging/notes.md --target main --latest
+          fi
+
+      - name: Remove the staging branch
+        if: always() && steps.meta.outputs.ready == 'true'
+        run: |
+          git push origin --delete release-staging || true
+          git push origin --delete claude/permission-probe 2>/dev/null || true
