@@ -126,7 +126,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NSIS not installed" }
           $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
-          Copy-Item '.github/patches/rampage-0.2.5-installer.nsi' 'rampage-setup.nsi' -Force
+          # NSIS resolves File/OutFile paths relative to the active script; normalize for the root copy.
+          $scriptText = Get-Content '.github/patches/rampage-0.2.5-installer.nsi' -Raw
+          $scriptText = $scriptText.Replace('..\..\dist\', 'dist\')
+          [System.IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'rampage-setup.nsi'), $scriptText)
           & $nsis -V3 -INPUTCHARSET UTF8 'rampage-setup.nsi'
           if ($LASTEXITCODE -ne 0) { throw "NSIS compile failed" }
           $exe = 'dist\RAMpage-Setup-0.2.exe'
