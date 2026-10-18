@@ -13,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: rampage-v0.2.5-release
+  group: rampage-v0.2.5-release-current
   cancel-in-progress: true
 
 jobs:
