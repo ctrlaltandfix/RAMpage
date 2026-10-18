@@ -1,0 +1,83 @@
+name: Build and publish RAMpage 0.2.5
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'release-source/RAMpage-0.2.5-persistence-fix-source.zip'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rampage-v0.2.5-release
+  cancel-in-progress: false
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate source archive
+        run: |
+          $file = 'release-source/RAMpage-0.2.5-persistence-fix-source.zip'
+          if (!(Test-Path $file)) { throw "Missing verified source archive: $file" }
+          $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          $expected = '7d44423947bb6889ae62820029f8e77a7f0700ebb8bfe50672bc4d72057ed9c7'
+          if ($actual -ne $expected) { throw "Source archive checksum mismatch. Expected $expected, got $actual" }
+          Expand-Archive -LiteralPath $file -DestinationPath $env:RUNNER_TEMP\rampage-src -Force
+          if (!(Test-Path "$env:RUNNER_TEMP\rampage-src\rampage\package.json")) { throw 'Source archive has no rampage/package.json' }
+          Move-Item "$env:RUNNER_TEMP\rampage-src\rampage" 'rampage'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: rampage/package-lock.json
+
+      - name: Install dependencies and test persistence
+        working-directory: rampage
+        run: |
+          npm ci
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'RAMpage tests failed' }
+          $v = (node -p "require('./package.json').version").Trim()
+          if ($v -ne '0.2.5') { throw "Expected 0.2.5, got $v" }
+
+      - name: Install NSIS compiler
+        run: |
+          if (!(Get-Command makensis -ErrorAction SilentlyContinue)) {
+            choco install nsis --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          }
+          $nsis = "${env:ProgramFiles(x86)}\NSIS"
+          if (Test-Path "$nsis\makensis.exe") { $nsis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
+
+      - name: Build Windows installer and checksum
+        working-directory: rampage
+        run: |
+          npm run dist
+          if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed' }
+          $installer = 'dist/RAMpage-Setup-0.2.exe'
+          if (!(Test-Path $installer) -or !(Test-Path "$installer.sha256")) { throw 'Installer or SHA-256 file missing' }
+          $expected = ((Get-Content "$installer.sha256" -Raw) -split '\\s+')[0].ToLowerInvariant()
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw 'Installer checksum verification failed' }
+
+      - name: Publish v0.2.5 as latest GitHub Release
+        working-directory: rampage
+        run: |
+          gh release view v0.2.5 *> $null
+          if ($LASTEXITCODE -eq 0) { throw 'v0.2.5 release already exists; refusing to overwrite it' }
+          gh release create v0.2.5 'dist/RAMpage-Setup-0.2.exe' 'dist/RAMpage-Setup-0.2.exe.sha256' --title 'RAMpage 0.2 Beta - build 0.2.5' --notes-file '../.github/RAMpage-0.2.5-release-notes.md' --target $env:GITHUB_SHA --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
