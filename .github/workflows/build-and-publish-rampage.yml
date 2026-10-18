@@ -82,6 +82,7 @@ jobs:
             $sourcePatchText = [regex]::Replace($originalPatch, '(?ms)^diff --git a/package\.json b/package\.json\r?\n.*?(?=^diff --git |\z)', '')
             $sourcePatch = "$env:RUNNER_TEMP\release-patch\app-source.patch"
             [System.IO.File]::WriteAllText($sourcePatch, $sourcePatchText)
+            Write-Host 'Applying tested application-only patch (packaged package.json is handled separately)'
             git apply --check $sourcePatch
             if ($LASTEXITCODE -ne 0) { throw "Patch doesn't match the v0.2.4 application source" }
             git apply $sourcePatch
