@@ -98,7 +98,7 @@ jobs:
             }
             foreach ($path in $expected.Keys) {
               $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
-              if ($actual -ne $expected[$path]) { throw "Source hash mismatch: $path" }
+              if ($actual -ne $expected[$path]) { throw "Source hash mismatch: $path (actual $actual, expected $($expected[$path]))" }
             }
             node --check 'src/storage.js'
             if ($LASTEXITCODE -ne 0) { throw "Invalid storage code" }
