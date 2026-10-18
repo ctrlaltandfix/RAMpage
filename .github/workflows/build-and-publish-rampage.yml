@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: rampage-v0.2.5-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   windows-installer:
