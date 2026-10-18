@@ -126,7 +126,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NSIS not installed" }
           $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
-          & $nsis -V3 -INPUTCHARSET UTF8 '.github/patches/rampage-0.2.5-installer.nsi'
+          Copy-Item '.github/patches/rampage-0.2.5-installer.nsi' 'rampage-setup.nsi' -Force
+          & $nsis -V3 -INPUTCHARSET UTF8 'rampage-setup.nsi'
           if ($LASTEXITCODE -ne 0) { throw "NSIS compile failed" }
           $exe = 'dist\RAMpage-Setup-0.2.exe'
           if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 10000000) { throw "Installer invalid or incomplete" }
