@@ -35,15 +35,17 @@ jobs:
           fi
           echo "ready=true" >> "$GITHUB_OUTPUT"
           echo "version=$(jq -r .version staging/release.json)" >> "$GITHUB_OUTPUT"
+          echo "file=$(jq -r '.file // ("RAMpage-Setup-" + .version + ".exe")' staging/release.json)" >> "$GITHUB_OUTPUT"
+          echo "title=$(jq -r '.title // ("RAMpage " + .version)' staging/release.json)" >> "$GITHUB_OUTPUT"
 
       - name: Reassemble and verify the installer
         if: steps.meta.outputs.ready == 'true'
         run: |
-          V="${{ steps.meta.outputs.version }}"
-          cat $(ls staging/RAMpage-Setup-$V.exe.part* | sort) > "RAMpage-Setup-$V.exe"
-          cp "staging/RAMpage-Setup-$V.exe.sha256" .
-          sha256sum -c "RAMpage-Setup-$V.exe.sha256"
-          ls -l "RAMpage-Setup-$V.exe"
+          F="${{ steps.meta.outputs.file }}"
+          cat $(ls "staging/$F".part* | sort) > "$F"
+          cp "staging/$F.sha256" .
+          sha256sum -c "$F.sha256"
+          ls -l "$F"
 
       - name: Remove superseded releases
         if: steps.meta.outputs.ready == 'true'
@@ -57,12 +59,13 @@ jobs:
         if: steps.meta.outputs.ready == 'true'
         run: |
           V="${{ steps.meta.outputs.version }}"
-          FILES="RAMpage-Setup-$V.exe RAMpage-Setup-$V.exe.sha256"
+          F="${{ steps.meta.outputs.file }}"
+          FILES="$F $F.sha256"
           if gh release view "v$V" >/dev/null 2>&1; then
             gh release upload "v$V" $FILES --clobber
             gh release edit "v$V" --notes-file staging/notes.md
           else
-            gh release create "v$V" $FILES --title "RAMpage $V" --notes-file staging/notes.md --target main --latest
+            gh release create "v$V" $FILES --title "${{ steps.meta.outputs.title }}" --notes-file staging/notes.md --target main --latest
           fi
 
       - name: Remove the staging branch
