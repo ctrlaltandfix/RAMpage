@@ -99,9 +99,8 @@ jobs:
             $rendererText = Get-Content 'src/renderer/app.js' -Raw
             if (!$storageText.Contains('manual-games.ndjson') -or
                 !$storageText.Contains('manualDeleted') -or
-                !$storageText.Contains('manualRecords') -or
-                !$storageText.Contains('verify')) { throw "Manual-game recovery code missing" }
-            if (!$mainText.Contains('verifyGame') -or !$rendererText.Contains('save')) {
+                !$storageText.Contains('manualRecords')) { throw "Manual-game recovery code missing" }
+            if (!$mainText.Contains('const verify = new Storage(') -or !$rendererText.Contains('added and saved')) {
               throw "Game persistence integration missing from patched app"
             }
             foreach ($path in @('src/main.js','src/storage.js','src/renderer/app.js')) {
