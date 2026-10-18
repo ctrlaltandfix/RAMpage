@@ -6,7 +6,7 @@ SetCompressor /SOLID lzma
 SetCompressorDictSize 64
 SetOverwrite try
 Name "RAMpage"
-OutFile "dist\RAMpage-Setup-0.2.exe"
+OutFile "..\..\dist\RAMpage-Setup-0.2.exe"
 InstallDir "$LOCALAPPDATA\Programs\RAMpage"
 InstallDirRegKey HKCU "Software\RAMpage" "InstallDir"
 VIProductVersion "0.2.5.0"
@@ -62,7 +62,7 @@ Section "RAMpage" SecMain
   RMDir /r "$INSTDIR\locales"
   SetOverwrite try
   ClearErrors
-  File /r "dist\win-unpacked\*.*"
+  File /r "..\..\dist\win-unpacked\*.*"
   IfErrors FailedCopy
   SetOverwrite on
 
