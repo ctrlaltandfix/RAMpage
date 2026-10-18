@@ -4,7 +4,9 @@ on:
   push:
     branches: [main]
     paths:
-      - 'release-source/RAMpage-0.2.5-persistence-fix-source.zip'
+      - '.github/patches/v0.2.5-from-v0.2.4.patch.xz.base64'
+      - '.github/patches/rampage-0.2.5-installer.nsi'
+      - '.github/workflows/build-and-publish-rampage.yml'
   workflow_dispatch:
 
 permissions:
@@ -24,60 +26,100 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate source archive
+      - name: Download previous verified installer
         run: |
-          $file = 'release-source/RAMpage-0.2.5-persistence-fix-source.zip'
-          if (!(Test-Path $file)) { throw "Missing verified source archive: $file" }
-          $actual = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
-          $expected = '7d44423947bb6889ae62820029f8e77a7f0700ebb8bfe50672bc4d72057ed9c7'
-          if ($actual -ne $expected) { throw "Source archive checksum mismatch. Expected $expected, got $actual" }
-          Expand-Archive -LiteralPath $file -DestinationPath $env:RUNNER_TEMP\rampage-src -Force
-          if (!(Test-Path "$env:RUNNER_TEMP\rampage-src\rampage\package.json")) { throw 'Source archive has no rampage/package.json' }
-          Move-Item "$env:RUNNER_TEMP\rampage-src\rampage" 'rampage'
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\previous" | Out-Null
+          gh release download v0.2.4 --pattern 'RAMpage-Setup-0.2.exe' --dir "$env:RUNNER_TEMP\previous"
+          if ($LASTEXITCODE -ne 0) { throw "Could not download official v0.2.4 installer" }
+          if ((Get-Item "$env:RUNNER_TEMP\previous\RAMpage-Setup-0.2.exe").Length -lt 10000000) { throw "Incomplete v0.2.4 installer" }
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: rampage/package-lock.json
-
-      - name: Install dependencies and test persistence
-        working-directory: rampage
+      - name: Extract installed Electron application
         run: |
-          npm ci
-          npm test
-          if ($LASTEXITCODE -ne 0) { throw 'RAMpage tests failed' }
-          $v = (node -p "require('./package.json').version").Trim()
-          if ($v -ne '0.2.5') { throw "Expected 0.2.5, got $v" }
-
-      - name: Install NSIS compiler
-        run: |
-          if (!(Get-Command makensis -ErrorAction SilentlyContinue)) {
-            choco install nsis --yes --no-progress
-            if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\previous-unpacked" | Out-Null
+          & 7z x '-y' "-o$env:RUNNER_TEMP\previous-unpacked" "$env:RUNNER_TEMP\previous\RAMpage-Setup-0.2.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract the known-good Windows installer" }
+          $candidates = @(Get-ChildItem -Path "$env:RUNNER_TEMP\previous-unpacked" -Recurse -File -Filter RAMpage.exe)
+          $appExe = $candidates | Where-Object { Test-Path (Join-Path $_.DirectoryName 'resources\app.asar') } | Select-Object -First 1
+          if (!$appExe) {
+            Get-ChildItem "$env:RUNNER_TEMP\previous-unpacked" | Select-Object -First 30 | Format-Table
+            throw "Installer does not expose an unpacked Electron app; refuse to publish a guessed build"
           }
-          $nsis = "${env:ProgramFiles(x86)}\NSIS"
-          if (Test-Path "$nsis\makensis.exe") { $nsis | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append }
+          New-Item -ItemType Directory -Force 'dist\win-unpacked' | Out-Null
+          Copy-Item -Path "$($appExe.DirectoryName)\*" -Destination 'dist\win-unpacked' -Recurse -Force
+          if (!(Test-Path 'dist\win-unpacked\resources\app.asar')) { throw "Missing source asar" }
 
-      - name: Build Windows installer and checksum
-        working-directory: rampage
+      - name: Decode and verify the tested 0.2.5 patch
         run: |
-          npm run dist
-          if ($LASTEXITCODE -ne 0) { throw 'Windows installer build failed' }
-          $installer = 'dist/RAMpage-Setup-0.2.exe'
-          if (!(Test-Path $installer) -or !(Test-Path "$installer.sha256")) { throw 'Installer or SHA-256 file missing' }
-          $expected = ((Get-Content "$installer.sha256" -Raw) -split '\\s+')[0].ToLowerInvariant()
-          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) { throw 'Installer checksum verification failed' }
+          $patch64 = (Get-Content '.github/patches/v0.2.5-from-v0.2.4.patch.xz.base64' -Raw) -replace '\s', ''
+          if ($patch64.Length -ne 11916) { throw "Incorrect patch payload length" }
+          $compressed = [Convert]::FromBase64String($patch64)
+          $patchDir = "$env:RUNNER_TEMP\release-patch"
+          New-Item -ItemType Directory -Force $patchDir | Out-Null
+          $compressedPath = Join-Path $patchDir 'v0.2.5.patch.xz'
+          [System.IO.File]::WriteAllBytes($compressedPath, $compressed)
+          $hash = (Get-FileHash $compressedPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'a1b6dba558e519ae0027bae80f0ffdebb612dfe713cd26916870e84bd8864077') {
+            throw "Patch checksum mismatch: $hash"
+          }
+          & 7z e '-y' "-o$patchDir" $compressedPath
+          if ($LASTEXITCODE -ne 0) { throw "Could not decompress patch" }
+          if (!(Test-Path (Join-Path $patchDir 'v0.2.5.patch'))) { throw "Patch not found after decompression" }
 
-      - name: Publish v0.2.5 as latest GitHub Release
-        working-directory: rampage
+      - name: Patch installed app and verify all fixed source files
+        run: |
+          $src = "$env:RUNNER_TEMP\rampage-src"
+          npx --yes '@electron/asar@3.4.1' extract 'dist\win-unpacked\resources\app.asar' $src
+          if ($LASTEXITCODE -ne 0) { throw "Failed to unpack the original app" }
+          Push-Location $src
+          try {
+            $patch = "$env:RUNNER_TEMP\release-patch\v0.2.5.patch"
+            git apply --check $patch
+            if ($LASTEXITCODE -ne 0) { throw "Patch doesn't match v0.2.4; original installer source has drifted" }
+            git apply $patch
+            if ($LASTEXITCODE -ne 0) { throw "Patch failed" }
+            $expected = @{
+              'package.json' = '42e3138f8c8a3b8f7b569cb248180bba591008c567be38e5530342564bd3fc52'
+              'src/main.js' = '71b181ba366dd5d418957ed20ea1920710d56bb01d238e6cbf4ef375ce0e1a00'
+              'src/storage.js' = '5bac32da47da751a98ab59a6f2ad9d57e1f97a543d353674747803fda5cada78'
+              'src/renderer/app.js' = '04e525b55d57e49063a559bde2b4b3380bdec130e90b59c82933e6119dfe54fc'
+            }
+            foreach ($path in $expected.Keys) {
+              $actual = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($actual -ne $expected[$path]) { throw "Source hash mismatch: $path" }
+            }
+            node --check 'src/storage.js'
+            if ($LASTEXITCODE -ne 0) { throw "Invalid storage code" }
+            node --check 'src/main.js'
+            if ($LASTEXITCODE -ne 0) { throw "Invalid main-process code" }
+            node --check 'src/renderer/app.js'
+            if ($LASTEXITCODE -ne 0) { throw "Invalid renderer code" }
+            $version = (node -p "require('./package.json').version").Trim()
+            if ($version -ne '0.2.5') { throw "Incorrect build version" }
+            npx --yes '@electron/asar@3.4.1' pack $src "$env:GITHUB_WORKSPACE\dist\win-unpacked\resources\app.asar"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to repack patched application" }
+          } finally {
+            Pop-Location
+          }
+
+      - name: Compile guarded Windows update installer
+        run: |
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS not installed" }
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
+          & $nsis -V3 -INPUTCHARSET UTF8 '.github/patches/rampage-0.2.5-installer.nsi'
+          if ($LASTEXITCODE -ne 0) { throw "NSIS compile failed" }
+          $exe = 'dist\RAMpage-Setup-0.2.exe'
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 10000000) { throw "Installer invalid or incomplete" }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$exe.sha256", "$hash  RAMpage-Setup-0.2.exe"+[Environment]::NewLine)
+
+      - name: Publish actual 0.2.5 update
         run: |
           gh release view v0.2.5 *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'v0.2.5 release already exists; refusing to overwrite it' }
-          gh release create v0.2.5 'dist/RAMpage-Setup-0.2.exe' 'dist/RAMpage-Setup-0.2.exe.sha256' --title 'RAMpage 0.2 Beta - build 0.2.5' --notes-file '../.github/RAMpage-0.2.5-release-notes.md' --target $env:GITHUB_SHA --latest
-          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
+          if ($LASTEXITCODE -eq 0) { throw "Release already exists; refusing to overwrite" }
+          gh release create v0.2.5 'dist/RAMpage-Setup-0.2.exe' 'dist/RAMpage-Setup-0.2.exe.sha256' --title 'RAMpage 0.2 Beta — build 0.2.5' --notes-file '.github/RAMpage-0.2.5-release-notes.md' --target $env:GITHUB_SHA --latest
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release publication failed" }
