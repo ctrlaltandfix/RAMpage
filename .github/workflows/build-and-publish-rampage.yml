@@ -76,12 +76,21 @@ jobs:
           Push-Location $src
           try {
             $patch = "$env:RUNNER_TEMP\release-patch\v0.2.5.patch"
-            git apply --check $patch
-            if ($LASTEXITCODE -ne 0) { throw "Patch doesn't match v0.2.4; original installer source has drifted" }
-            git apply $patch
-            if ($LASTEXITCODE -ne 0) { throw "Patch failed" }
+            # electron-builder strips build-only package.json fields from the ASAR;
+            # apply the exact tested code patch, then update packaged version separately.
+            $originalPatch = Get-Content $patch -Raw
+            $sourcePatchText = [regex]::Replace($originalPatch, '(?ms)^diff --git a/package\.json b/package\.json\r?\n.*?(?=^diff --git |\z)', '')
+            $sourcePatch = "$env:RUNNER_TEMP\release-patch\app-source.patch"
+            [System.IO.File]::WriteAllText($sourcePatch, $sourcePatchText)
+            git apply --check $sourcePatch
+            if ($LASTEXITCODE -ne 0) { throw "Patch doesn't match the v0.2.4 application source" }
+            git apply $sourcePatch
+            if ($LASTEXITCODE -ne 0) { throw "Application patch failed" }
+            $pkg = Get-Content 'package.json' -Raw | ConvertFrom-Json
+            if ($pkg.version -ne '0.2.4') { throw "Expected packaged v0.2.4 before upgrading" }
+            $pkg.version = '0.2.5'
+            [System.IO.File]::WriteAllText((Join-Path $src 'package.json'), ($pkg | ConvertTo-Json -Depth 100))
             $expected = @{
-              'package.json' = '42e3138f8c8a3b8f7b569cb248180bba591008c567be38e5530342564bd3fc52'
               'src/main.js' = '71b181ba366dd5d418957ed20ea1920710d56bb01d238e6cbf4ef375ce0e1a00'
               'src/storage.js' = '5bac32da47da751a98ab59a6f2ad9d57e1f97a543d353674747803fda5cada78'
               'src/renderer/app.js' = '04e525b55d57e49063a559bde2b4b3380bdec130e90b59c82933e6119dfe54fc'
