@@ -2,7 +2,7 @@ name: Build RAMpage 1.3.1 ShadPS4 Quick Access fix
 
 on:
   push:
-    branches: [chatgpt-build-v1.3.1]
+    branches: [chatgpt-shadps4-overlay-v1.3.1]
     paths: ['.github/workflows/build-rampage-v1.3.1.yml', '.github/patches/quick-access-policy.js', 'tests/quick-access-policy.test.js']
 
 permissions:
