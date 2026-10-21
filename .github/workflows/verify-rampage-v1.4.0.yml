@@ -41,7 +41,7 @@ jobs:
           github-token: ${{ github.token }}
           path: prior
 
-      - name: Run actual RAMpage v1.2.27 updater check against latest release
+      - name: Run v1.3 updater code against published v1.4.0 against latest release
         run: |
           test -f prior/packaged-application/src/updater.js
           cat > verify-updater.cjs <<'JS'
@@ -66,9 +66,9 @@ jobs:
           updater.check().then(result => {
             assert.equal(result.status, 'available');
             assert.equal(result.version, '1.4.0');
-            assert.match(result.url, /RAMpage-Setup-1\.3\.exe$/);
-            assert.match(result.shaUrl, /RAMpage-Setup-1\.3\.exe\.sha256$/);
-            console.log('PASS: real v1.2.27 updater determines v1.4.0 available using live GitHub release data');
+            assert.match(result.url, /RAMpage-Setup-1\.4\.exe$/);
+            assert.match(result.shaUrl, /RAMpage-Setup-1\.4\.exe\.sha256$/);
+            console.log('PASS: RAMpage v1.3 updater determines v1.4.0 available using live GitHub release data');
           }).catch(error => { console.error(error); process.exitCode=1; });
           JS
           node verify-updater.cjs
