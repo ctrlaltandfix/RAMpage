@@ -1,0 +1,109 @@
+# One-time, read-only recovery from the publicly released RAMpage v1.2.27 installer.
+# Runs only on this dedicated branch (or manual dispatch after merge).
+# Never publishes a release or commits recovered code to the repository.
+name: Recover RAMpage v1.2.27 packaged source
+
+on:
+  push:
+    branches:
+      - chatgpt-recover-v1.2.27
+    paths:
+      - .github/workflows/recover-v1.2.27.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout workflow
+        uses: actions/checkout@v4
+
+      - name: Configure Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download official installer and verify pinned SHA-256
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installerDir = Join-Path $env:RUNNER_TEMP 'installer'
+          New-Item -ItemType Directory -Force $installerDir | Out-Null
+          gh release download 'v1.2.27' --pattern 'RAMpage-Setup-1.2.exe' --dir $installerDir
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download RAMpage v1.2.27' }
+          gh release download 'v1.2.27' --pattern 'RAMpage-Setup-1.2.exe.sha256' --dir $installerDir
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download RAMpage checksum' }
+          $exe = Join-Path $installerDir 'RAMpage-Setup-1.2.exe'
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 10000000) { throw 'Installer is missing or too small' }
+          $actual = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $pinned = '9c31cfdea0aea2f8ad2d1e98782f6372e1063cae9022fbc654a17341a5d6bf1f'
+          if ($actual -ne $pinned) { throw "Official v1.2.27 installer differs from audited hash: $actual" }
+          $shaText = Get-Content (Join-Path $installerDir 'RAMpage-Setup-1.2.exe.sha256') -Raw
+          $advertised = [regex]::Match($shaText, '(?i)[a-f0-9]{64}').Value.ToLowerInvariant()
+          if ($advertised -ne $actual) { throw 'Release checksum file does not match actual installer' }
+          Write-Host "Official installer verified SHA-256: $actual"
+
+      - name: Extract Electron application ASAR
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $exe = Join-Path $env:RUNNER_TEMP 'installer\RAMpage-Setup-1.2.exe'
+          $unpacked = Join-Path $env:RUNNER_TEMP 'unpacked'
+          New-Item -ItemType Directory -Force $unpacked | Out-Null
+          & 7z x '-y' "-o$unpacked" $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to unpack official installer with 7-Zip' }
+          $asars = @(Get-ChildItem -Path $unpacked -Filter 'app.asar' -File -Recurse |
+            Where-Object { $_.DirectoryName -match '[\\/]resources$' })
+          if ($asars.Count -ne 1) {
+            throw "Expected one Electron resources/app.asar, found $($asars.Count); verify installer layout manually"
+          }
+          $dest = Join-Path $env:GITHUB_WORKSPACE 'recovery'
+          $source = Join-Path $dest 'packaged-application'
+          New-Item -ItemType Directory -Force $source | Out-Null
+          & npx --yes '@electron/asar@3.4.1' extract $asars[0].FullName $source
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR extraction failed' }
+          if (!(Test-Path (Join-Path $source 'package.json'))) { throw 'No packaged package.json found' }
+          if (!(Test-Path (Join-Path $source 'src\main.js'))) { throw 'No src/main.js found; inspect app layout before use' }
+          $version = (Get-Content (Join-Path $source 'package.json') -Raw | ConvertFrom-Json).version
+          Write-Host "Embedded packaged app version: $version"
+          $meta = @{
+            release_tag = 'v1.2.27'
+            release_asset = 'RAMpage-Setup-1.2.exe'
+            installer_sha256 = '9c31cfdea0aea2f8ad2d1e98782f6372e1063cae9022fbc654a17341a5d6bf1f'
+            extracted_from = 'Electron resources/app.asar'
+            packaged_app_version = $version
+            build_ready = $false
+            warnings = @('Recovered packaged code is not the original complete development project.',
+                         'Rebuild original build scripts, tests, dependency lockfile and installer assets before shipping.')
+          }
+          $meta | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $dest 'RECOVERY-MANIFEST.json')
+          @'
+          # RAMpage v1.2.27 packaged application recovery
+
+          This folder was automatically extracted from the official v1.2.27 Windows installer.
+          It is **not** a fully reconstructed development repository. The extracted packaged
+          Electron app may omit the original build/ folder, development-only dependencies,
+          package-lock.json, tests and files excluded from app.asar.
+
+          Merge with historic development tooling only after version-specific review.
+          Do not publish an installer using the historic v0.2.5 build assets unmodified.
+          Never commit user-specific settings, tokens or game library data.
+          '@ | Set-Content -Path (Join-Path $dest 'README.md')
+          Get-ChildItem -Path $source | Select-Object Name,Mode,Length | Format-Table
+          node --check (Join-Path $source 'src\main.js')
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged app main.js failed syntax check' }
+
+      - name: Upload recovered files for review (not a release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAMpage-v1.2.27-recovered-packaged-app
+          path: recovery/
+          if-no-files-found: error
+          retention-days: 7
