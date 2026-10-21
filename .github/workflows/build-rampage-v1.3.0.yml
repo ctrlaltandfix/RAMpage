@@ -30,8 +30,8 @@ jobs:
 
       - name: Ensure release does not already exist
         run: |
-          gh release view v1.3.0 *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'Release v1.3.0 already exists, refusing overwrite.' }
+          $existing = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($existing | Where-Object { $_.tagName -eq 'v1.3.0' }).Count -gt 0) { throw 'Release v1.3.0 already exists, refusing overwrite.' }
 
       - name: Download and verify official v1.2.27 release
         run: |
@@ -98,7 +98,7 @@ jobs:
           if (!$script.Contains('VIProductVersion "1.3.0.0"') -or
               !$script.Contains('FileWrite $0 "1.3.0"')) { throw 'Version substitution failed' }
           [System.IO.File]::WriteAllText('rampage-1.3-installer.nsi',$script)
-          $nsis = '${env:ProgramFiles(x86)}\NSIS\makensis.exe'
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
           & $nsis -V3 -INPUTCHARSET UTF8 'rampage-1.3-installer.nsi'
           if ($LASTEXITCODE -ne 0) { throw 'NSIS compilation failed' }
@@ -142,8 +142,8 @@ jobs:
       - name: Publish version 1.3.0 only after installer tests pass
         run: |
           $ErrorActionPreference = 'Stop'
-          gh release view v1.3.0 *> $null
-          if ($LASTEXITCODE -eq 0) { throw 'Existing release may not be overwritten' }
+          $existing = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($existing | Where-Object { $_.tagName -eq 'v1.3.0' }).Count -gt 0) { throw 'Existing release may not be overwritten' }
           @'
           ## RAMpage 1.3 Beta — update verification release
 
