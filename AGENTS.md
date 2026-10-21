@@ -6,7 +6,7 @@ Release feed: GitHub Releases for this repository.
 
 ## Critical current state (verified 2026-10-21)
 - Latest observed release tag: **v1.2.27**, published 2026-10-21, with `RAMpage-Setup-1.2.exe` and its `.sha256` checksum.
-- The `main` branch contains project documentation and release workflows, **not the complete current RAMpage application source**.
+- The `main` branch contains project documentation and release workflows, **not the complete current RAMpage application source**. The repository is **public**; do not upload or commit proprietary source without the owner's approval. A separate private source repository may be appropriate.
 - `.github/workflows/publish-release.yml` publishes an installer from `release-staging` after reassembling chunks and checking its checksum.
 - `.github/workflows/build-and-publish-rampage.yml` is a legacy v0.2.5 recovery build that downloads v0.2.4, patches it and publishes v0.2.5. **Do not run or repurpose it as the current-source build.**
 - A historic, separately saved `RAMpage-0.2.5-persistence-fix-source.zip` includes the old Electron `src/`, `build/`, `package.json`, `package-lock.json` and tests. **Do not mistake it for v1.2.27.**
@@ -15,7 +15,7 @@ Release feed: GitHub Releases for this repository.
 ## Priorities for the next coding session
 1. Import the **actual source tree used to make v1.2.27**, ideally a source archive from the original development environment. If that source is missing, recover the packaged Electron app from the official v1.2.27 installer for inspection, but recognize it may lack build-time scripts and source maps.
 2. Verify source version and feature parity with v1.2.27 before modifying or publishing anything.
-3. Add a source-controlled Windows GitHub Actions build/test workflow (prefer `windows-latest`) that uses `npm ci`, automated tests, installer build, SHA-256 verification and retention of CI artifacts; make publication a deliberate, guarded step.
+3. Once the owner chooses where source may be stored (private source repo or approved public repo), add a source-controlled Windows GitHub Actions build/test workflow (prefer `windows-latest`) that uses `npm ci`, automated tests, installer build, SHA-256 verification and retention of CI artifacts; make publication a deliberate, guarded step.
 4. Resolve existing updater reliability issues only against the current source.
 5. Introduce future changes on a feature branch / pull request, with changelog and tests.
 
