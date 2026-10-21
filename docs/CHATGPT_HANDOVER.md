@@ -36,7 +36,14 @@ The existing staged-release GitHub Action automatically processes a completed `s
 
 Confirmed recent v1.2.2x release notes mention Big Screen cover-art layout, Windows startup behavior, Xbox-button / Quick Access handling, improved stopping of games, and multiple controller-input fixes. Older source archives do **not** contain all these features.
 
-## Source import checklist
+## Verified recovery outcome (2026-10-21)
+
+- [Recovery workflow run #39572599068](https://github.com/ctrlaltandfix/RAMpage/actions/runs/39572599068) **succeeded**. Installer official SHA-256 verified.
+- [7-day Actions artifact](https://github.com/ctrlaltandfix/RAMpage/actions/runs/39572599068/artifacts/12332153143) contains the extracted packaged v1.2.27 application (18 files, including 15 packaged app files).
+- Confirmed packaged `package.json` version **1.2.27**. Recovered `src/main.js`, `src/preload.js`, `src/renderer/{index.html,app.js,styles.css}`, scanners, storage, updater, SteamGridDB, emulators, platforms and metadata.
+- A separate candidate development ZIP was assembled in ChatGPT using **v1.2.27 application code** and **v0.2.5 historic build tooling**. JavaScript syntax checks pass; the historic test suite had **6 passing and 4 failing** tests (two tests depend on older mocks, two use older storage/tombstone assumptions). This is **not release-ready**; the full Windows build and upgrade smoke tests remain outstanding.
+- No existing GitHub release or installer was changed. Do not commit recovered source to this public repo without project-owner approval.
+\n## Source import checklist
 
 1. **Preferred:** get the complete folder / source ZIP from the Claude development project corresponding to `v1.2.27`. Check the `package.json` version, GitHub update setting, and all application and build files.
 2. **Fallback:** use the **official** published v1.2.27 Windows installer to inspect/recover the packaged Electron `resources/app.asar` (for example using 7-Zip and an Electron ASAR unpacking tool). Do not assume this recovered app is a complete reproducible source tree; rebuild assets, scripts, lockfile and signing/installer configuration may be omitted.
@@ -53,4 +60,4 @@ Past RAMpage work reported that an update sometimes did not appear inside the bu
 
 Ask for one feature or bug fix, pointing to `ctrlaltandfix/RAMpage`. Expect an implementation branch, tests and a pull request first. After review, ask for the Windows build/release explicitly. ChatGPT should check the repository's current code and release state every time rather than relying on an old ZIP or old version numbers.
 
-**Migration status:** repository and release pipeline verified; handover recorded; **current v1.2.27 editable source still needs importing or recovery.** No release or installer has been altered as part of this documentation handover.
+**Migration status:** repository and release pipeline verified; handover recorded; v1.2.27 packaged application files **recovered** from the official release as a workflow artifact. Full source-controlled build readiness is still pending. No release or installer has been altered by this process.
