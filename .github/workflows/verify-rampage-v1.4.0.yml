@@ -1,0 +1,74 @@
+name: Verify live RAMpage v1.4.0 detection from v1.3
+
+on:
+  push:
+    branches: [chatgpt-updater-version-v1.4.0]
+    paths: ['.github/workflows/verify-rampage-v1.4.0.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Fetch authenticated live latest-release record
+        run: |
+          gh api repos/$GH_REPO/releases/latest > release.json
+          jq -e '.tag_name == "v1.4.0" and .draft == false and .prerelease == false' release.json
+          jq -e '[.assets[].name] | index("RAMpage-Setup-1.4.exe") != null' release.json
+          jq -e '[.assets[].name] | index("RAMpage-Setup-1.4.exe.sha256") != null' release.json
+          jq -e '.assets[] | select(.name == "RAMpage-Setup-1.4.exe") | .size > 100000000' release.json
+          gh release download v1.4.0 --pattern 'RAMpage-Setup-1.4.exe.sha256' --dir .
+          ACTUAL_SHA=$(awk '{print $1}' RAMpage-Setup-1.4.exe.sha256)
+          API_SHA=$(jq -r '.assets[] | select(.name == "RAMpage-Setup-1.4.exe") | .digest | sub("^sha256:";"")' release.json)
+          [ "$ACTUAL_SHA" = "$API_SHA" ] || { echo "Published checksum does not match GitHub asset digest"; exit 1; }
+          echo "Live GitHub latest release and installer checksum verified"
+
+      - name: Recover the original v1.2.27 updater for an integration test
+        uses: actions/download-artifact@v4
+        with:
+          name: RAMpage-v1.2.27-recovered-packaged-app
+          run-id: 39572599068
+          github-token: ${{ github.token }}
+          path: prior
+
+      - name: Run actual RAMpage v1.2.27 updater check against latest release
+        run: |
+          test -f prior/packaged-application/src/updater.js
+          cat > verify-updater.cjs <<'JS'
+          const assert = require('node:assert/strict');
+          const Module = require('node:module');
+          const fs = require('node:fs');
+          const release = JSON.parse(fs.readFileSync('release.json','utf8'));
+          const original = Module._load;
+          Module._load = function(name, ...args) {
+            if (name === 'electron') {
+              return {
+                app: { getVersion: () => '1.3.0' },
+                net: { fetch: async (url) => {
+                  assert.match(url, /\/releases\/latest$/);
+                  return { ok:true, status:200, json:async () => release };
+                }}
+              };
+            }
+            return original.call(this, name, ...args);
+          };
+          const updater = require('./prior/packaged-application/src/updater.js');
+          updater.check().then(result => {
+            assert.equal(result.status, 'available');
+            assert.equal(result.version, '1.4.0');
+            assert.match(result.url, /RAMpage-Setup-1\.3\.exe$/);
+            assert.match(result.shaUrl, /RAMpage-Setup-1\.3\.exe\.sha256$/);
+            console.log('PASS: real v1.2.27 updater determines v1.4.0 available using live GitHub release data');
+          }).catch(error => { console.error(error); process.exitCode=1; });
+          JS
+          node verify-updater.cjs
