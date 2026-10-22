@@ -5,7 +5,7 @@
 const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 
-const URL_PATTERN = /https:\/\/[a-z0-9]+(?:-[a-z0-9]+)*\.trycloudflare\.com\b/i;
+const URL_PATTERN = /https:\/\/[a-z0-9]+(?:-[a-z0-9]+)*\.trycloudflare\.com(?=$|[\s|"'<>),;])/i;
 class RemoteQuickTunnel {
   constructor({ exePath, getLocalUrl, spawnProcess=spawn, timeoutMs=45000, log=()=>{} }) {
     if (!exePath || typeof getLocalUrl !== 'function') throw Error('Quick Tunnel requires binary and local URL');
