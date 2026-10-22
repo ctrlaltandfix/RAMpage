@@ -1,0 +1,203 @@
+name: Build RAMpage v1.5.0 ShadPS4 accessibility recovery
+
+on:
+  push:
+    branches: [chatgpt-shadps4-rescue-v1.5.0]
+    paths: ['.github/workflows/build-rampage-v1.5.0.yml', '.github/patches/apply-shadps4-rescue.js', 'tests/shadps4-recovery.test.js']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rampage-v1.5.0-shadps4-rescue
+  cancel-in-progress: false
+
+jobs:
+  test-build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Ensure release does not already exist
+        run: |
+          $existing = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($existing | Where-Object { $_.tagName -eq 'v1.5.0' }).Count -gt 0) { throw 'Release v1.5.0 already exists, refusing overwrite.' }
+
+      - name: Download and verify official v1.4.1 release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -Type Directory -Force "$env:RUNNER_TEMP\old" | Out-Null
+          gh release download v1.4.1 --pattern 'RAMpage-Setup-1.4.1.exe' --dir "$env:RUNNER_TEMP\old"
+          if ($LASTEXITCODE -ne 0) { throw 'Download v1.4.1 failed' }
+          gh release download v1.4.1 --pattern 'RAMpage-Setup-1.4.1.exe.sha256' --dir "$env:RUNNER_TEMP\old"
+          if ($LASTEXITCODE -ne 0) { throw 'Download v1.4.1 checksum failed' }
+          $exe = "$env:RUNNER_TEMP\old\RAMpage-Setup-1.4.1.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne 'fe92e43c902869213ff1d48e44f6324033d23d315e2a80324c97bd83c44c7038') {
+            throw "Unexpected source binary digest $hash"
+          }
+          $sum = [regex]::Match((Get-Content "$exe.sha256" -Raw),'(?i)[a-f0-9]{64}').Value.ToLowerInvariant()
+          if ($sum -ne $hash) { throw 'Official release SHA-256 file mismatch' }
+          Write-Host "Verified official v1.4.1 digest: $hash"
+
+      - name: Repackage authentic v1.4.1 app as v1.5.0
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expanded = "$env:RUNNER_TEMP\expanded"
+          New-Item -ItemType Directory -Force $expanded | Out-Null
+          & 7z x '-y' "-o$expanded" "$env:RUNNER_TEMP\old\RAMpage-Setup-1.4.1.exe"
+          if ($LASTEXITCODE -ne 0) { throw '7z source-installer extraction failed' }
+          $candidates = @(Get-ChildItem $expanded -Recurse -File -Filter 'RAMpage.exe' | Where-Object {
+            Test-Path (Join-Path $_.DirectoryName 'resources\app.asar') })
+          if ($candidates.Count -ne 1) { throw "Expected 1 Electron app, got $($candidates.Count)" }
+          $target = "$env:GITHUB_WORKSPACE\dist\win-unpacked"
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Copy-Item -Path "$($candidates[0].DirectoryName)\*" -Destination $target -Recurse -Force
+          $unpacked = "$env:RUNNER_TEMP\source"
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" $unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR extraction failed' }
+          $manifest = "$unpacked\package.json"
+          $pkg = Get-Content $manifest -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '1.4.1') { throw "Unexpected embedded version $($pkg.version)" }
+          if ($pkg.updates.github -ne 'ctrlaltandfix/RAMpage') { throw 'Wrong in-app updater feed' }
+          # Do NOT attempt more over-game BrowserWindow tricks over Vulkan.
+          # Always-registered independent shortcut shows reliable in-app Quick Access.
+          node '.github/patches/apply-shadps4-rescue.js' $unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'ShadPS4 recovery code patch failed' }
+          $env:RAMPAGE_APP_ROOT = $unpacked
+          node --test 'tests/shadps4-recovery.test.js'
+          if ($LASTEXITCODE -ne 0) { throw 'ShadPS4 recovery regression tests failed' }
+          $patched = [System.IO.File]::ReadAllText((Join-Path $unpacked 'src\main.js'))
+          if (!$patched.Contains("registerShadPS4RescueShortcut();") -and
+              !$patched.Contains("registerShadPS4RescueShortcut);")) {
+            throw 'Independent ShadPS4 rescue binding missing from compiled app'
+          }
+          $pkg.version = '1.5.0'
+          [System.IO.File]::WriteAllText($manifest, ($pkg | ConvertTo-Json -Depth 100))
+          foreach ($source in @('src\main.js','src\quick-access-presenter.js','src\quick-access-policy.js','src\storage.js','src\updater.js','src\renderer\app.js')) {
+            & node --check "$unpacked\$source"
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $source" }
+          }
+          & npx --yes '@electron/asar@3.4.1' pack $unpacked "$target\resources\app.asar"
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR repack failed' }
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" "$env:RUNNER_TEMP\verify"
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR verification extract failed' }
+          $checkVer = (Get-Content "$env:RUNNER_TEMP\verify\package.json" -Raw | ConvertFrom-Json).version
+          if ($checkVer -ne '1.5.0') { throw "Repacked application version was $checkVer" }
+          Write-Host "Repacked official Electron app with new version: $checkVer"
+
+      - name: Build Windows updater-compatible installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS install failed' }
+          $script = Get-Content '.github/patches/rampage-0.2.5-installer.nsi' -Raw
+          if (!$script.Contains('/RELAUNCH') -or !$script.Contains('installed-build.txt') -or
+              !$script.Contains('Preserve $APPDATA')) { throw 'Base installer lacks safe update facilities' }
+          $script = $script.Replace('0.2.5','1.5.0').Replace('0.2 Beta','1.5 Beta')
+          $script = $script.Replace('RAMpage-Setup-0.2.exe','RAMpage-Setup-1.5.exe')
+          $script = $script.Replace('..\..\dist\','dist\')
+          if (!$script.Contains('VIProductVersion "1.5.0.0"') -or
+              !$script.Contains('FileWrite $0 "1.5.0"')) { throw 'Version substitution failed' }
+          [System.IO.File]::WriteAllText('rampage-1.4-installer.nsi',$script)
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
+          & $nsis -V3 -INPUTCHARSET UTF8 'rampage-1.4-installer.nsi'
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS compilation failed' }
+          $file = 'dist\RAMpage-Setup-1.5.exe'
+          if (!(Test-Path $file) -or (Get-Item $file).Length -lt 100000000) {
+            throw 'New installer invalid or unexpectedly small'
+          }
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$file.sha256", "$hash  RAMpage-Setup-1.5.exe"+[Environment]::NewLine)
+          Write-Host "Version 1.5.0 Windows installer SHA256: $hash"
+
+      - name: Test real 1.4.1 to 1.5.0 in-place silent install on Windows
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = "$env:LOCALAPPDATA\Programs\RAMpage"
+          $roaming = "$env:APPDATA\RAMpage"
+          $local = "$env:LOCALAPPDATA\RAMpage\data"
+          New-Item -Type Directory -Force $roaming,$local | Out-Null
+          $marker = [guid]::NewGuid().ToString()
+          Set-Content "$roaming\upgrade-sentinel.txt" $marker
+          Set-Content "$local\upgrade-sentinel.txt" $marker
+          $oldInstall = Start-Process "$env:RUNNER_TEMP\old\RAMpage-Setup-1.4.1.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($oldInstall.ExitCode -ne 0) { throw "Old install failed with $($oldInstall.ExitCode)" }
+          if (!(Test-Path "$installed\RAMpage.exe")) { throw 'v1.4.1 installation missing' }
+          $upgrade = Start-Process "$env:GITHUB_WORKSPACE\dist\RAMpage-Setup-1.5.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "v1.5.0 update failed with $($upgrade.ExitCode)" }
+          if ((Get-Content "$installed\installed-build.txt" -Raw).Trim() -ne '1.5.0') {
+            throw 'Installed-build marker is incorrect'
+          }
+          & npx --yes '@electron/asar@3.4.1' extract "$installed\resources\app.asar" "$env:RUNNER_TEMP\installed"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed app.asar cannot be verified' }
+          $installedVer = (Get-Content "$env:RUNNER_TEMP\installed\package.json" -Raw | ConvertFrom-Json).version
+          if ($installedVer -ne '1.5.0') { throw "Installed application version is $installedVer" }
+          foreach ($dir in @($roaming,$local)) {
+            if ((Get-Content "$dir\upgrade-sentinel.txt" -Raw).Trim() -ne $marker) {
+              throw "User data was changed or lost in $dir"
+            }
+          }
+          Write-Host 'PASSED: in-place Windows upgrade 1.4.1 -> 1.5.0, app version, marker and user data preserved'
+
+      - name: Publish version 1.5.0 only after installer tests pass
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $existing = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($existing | Where-Object { $_.tagName -eq 'v1.5.0' }).Count -gt 0) { throw 'Existing release may not be overwritten' }
+          @'
+          ## RAMpage 1.5 Beta — ShadPS4 Quick Access recovery mode
+
+          This release stops pretending an ordinary Electron window can reliably
+          overlay shadPS4's Vulkan fullscreen output.
+
+          NEW: Ctrl+Alt+R opens the full RAMpage Quick Access menu, even if
+          shadPS4's launcher has exited and RAMpage loses the game session.
+          This shortcut is registered whenever RAMpage is running (Windows).
+
+          NEW: Return to ShadPS4 within the Quick Access menu brings the
+          existing emulator game window back, independent of session tracking.
+
+          For tracked ShadPS4 sessions, the old Home/controller shortcut now
+          uses this reliable in-app menu route instead of the invisible overlay.
+          Native PC games and other emulators retain the original overlay behaviour.
+
+          Unlike previous releases, this workaround intentionally brings RAMpage
+          forward temporarily. It does not claim to draw a real toolbar over
+          Vulkan exclusive fullscreen.
+
+          Built from the verified official RAMpage v1.4.1 app. Regression tests
+          check the persistent shortcut, return controls, PS4 fallback selection,
+          installer build, user data retention and real Windows upgrade.
+          '@ | Set-Content 'release-notes-v1.5.md'
+          gh release create v1.5.0 'dist/RAMpage-Setup-1.5.exe' 'dist/RAMpage-Setup-1.5.exe.sha256' --title 'RAMpage 1.5.0 Beta' --notes-file 'release-notes-v1.5.md' --target main --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub publication failed' }
+
+      - name: Verify published release through authenticated GitHub API
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = $null
+          for ($i = 0; $i -lt 6; $i++) {
+            $release = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub release check failed' }
+            if ($release.tag_name -eq 'v1.5.0') { break }
+            Start-Sleep -Seconds 5
+          }
+          if ($release.tag_name -ne 'v1.5.0') { throw "Latest release is $($release.tag_name), not v1.5.0" }
+          $exe = @($release.assets | Where-Object { $_.name -eq 'RAMpage-Setup-1.5.exe' })
+          $sha = @($release.assets | Where-Object { $_.name -eq 'RAMpage-Setup-1.5.exe.sha256' })
+          if ($exe.Count -ne 1 -or $sha.Count -ne 1 -or $exe[0].size -lt 100000000) {
+            throw 'Latest-release installer or checksum is missing'
+          }
+          Write-Host 'PASS: v1.5.0 is latest release and installer+checksum are available'
