@@ -80,8 +80,11 @@ jobs:
           $before=[System.IO.File]::ReadAllText((Join-Path $unpacked 'src\main.js'))
           if(!$before.Contains('ShadPS4 foreground release result: ') -or
              !$before.Contains("ipcMain.handle('remote:tunnel-start'") -or
-             !$before.Contains("ipcMain.handle('hydra:remote-configure'") -or
-             !$before.Contains('Hydra Launcher is an alternative game launcher')){
+             !$before.Contains("ipcMain.handle('hydra:remote-configure'")){
+            throw 'Official v1.6.3 baseline missing Hydra or tunnel';
+          }
+          $disclaimer=[System.IO.File]::ReadAllText("$unpacked\src\renderer\app.js")
+          if(!$disclaimer.Contains('Hydra Launcher is an alternative game launcher')){
             throw 'Official v1.6.3 baseline missing Hydra, disclaimer or tunnel'
           }
           node 'scripts/apply-hydra-account-index.js' $unpacked
