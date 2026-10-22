@@ -82,6 +82,25 @@ const handlers=[
  '    };',
  ''].join('\n');
 renderer=patch(renderer,bind,handlers+bind,'Hydra Settings handlers');
+// Only offer Hydra as a filter choice after it actually appears in the remote catalogue.
+const remoteClient=path.join(base,'src','remote','client.js');
+const oldClient=fs.readFileSync(remoteClient,'utf8');
+const oldReload="async function reload(){const d=await call('/api/games');state.games=d.games.sort((a,b)=>a.name.localeCompare(b.name));render();}";
+const newReload=[
+ "async function reload(){",
+ "  const d=await call('/api/games');",
+ "  state.games=d.games.sort((a,b)=>a.name.localeCompare(b.name));",
+ "  const filter=qs('filter'),existing=filter.querySelector('option[value=\"hydra\"]');",
+ "  if(state.games.some(g=>g.source==='hydra')&&!existing){",
+ "    const option=document.createElement('option');option.value='hydra';option.textContent='Hydra Launcher';filter.append(option);",
+ "  } else if(!state.games.some(g=>g.source==='hydra')&&existing){",
+ "    if(filter.value==='hydra')filter.value='all';existing.remove();",
+ "  }",
+ "  render();",
+ "}"
+].join('\n');
+fs.writeFileSync(remoteClient,patch(oldClient,oldReload,newReload,'Hydra filter only when enabled'));
+cp.execFileSync(process.execPath,['--check',remoteClient],{stdio:'inherit'});
 fs.copyFileSync(path.join(__dirname,'..','src','hydra-remote-provider.js'),path.join(base,'src','hydra-remote-provider.js'));
 for(const [p,t] of [[fMain,main],[fPreload,preload],[fRenderer,renderer]])fs.writeFileSync(p,t);
 for(const f of [fMain,fPreload,fRenderer,path.join(base,'src','hydra-remote-provider.js')])cp.execFileSync(process.execPath,['--check',f],{stdio:'inherit'});
