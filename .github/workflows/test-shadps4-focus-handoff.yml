@@ -1,0 +1,80 @@
+name: Test ShadPS4 foreground handoff patch (no release)
+
+on:
+  push:
+    branches: [chatgpt-shadps4-focus-handoff-preview]
+    paths:
+      - .github/workflows/test-shadps4-focus-handoff.yml
+      - .github/patches/apply-shadps4-focus-handoff.js
+      - tests/shadps4-focus-handoff.test.js
+
+permissions:
+  contents: read
+
+jobs:
+  patch-validation:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Download and verify official RAMpage v1.5.0 baseline
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\release" | Out-Null
+          gh release download 'v1.5.0' --pattern 'RAMpage-Setup-1.5.exe' --dir "$env:RUNNER_TEMP\release"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download v1.5 release' }
+          $installer="$env:RUNNER_TEMP\release\RAMpage-Setup-1.5.exe"
+          $digest=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne 'b4d4101de9444b4c4435da4029f0d72b6e4c1b0bb7fc85e9041634d68e5d2c9c') {
+            throw "Unexpected baseline installer hash $digest"
+          }
+          Write-Host "Authentic v1.5 installer digest verified: $digest"
+
+      - name: Extract current Electron application and apply guarded focus fix
+        run: |
+          $ErrorActionPreference='Stop'
+          $expanded="$env:RUNNER_TEMP\installer-extracted"
+          New-Item -ItemType Directory -Force $expanded | Out-Null
+          & 7z x '-y' "-o$expanded" "$env:RUNNER_TEMP\release\RAMpage-Setup-1.5.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot extract official release' }
+          $apps=@(Get-ChildItem $expanded -Recurse -File -Filter 'RAMpage.exe' | Where-Object {
+            Test-Path (Join-Path $_.DirectoryName 'resources\app.asar')
+          })
+          if ($apps.Count -ne 1) { throw "Expected one Electron application; got $($apps.Count)" }
+          $asar=Join-Path $apps[0].DirectoryName 'resources\app.asar'
+          $source="$env:RUNNER_TEMP\app"
+          & npx --yes '@electron/asar@3.4.1' extract $asar $source
+          if ($LASTEXITCODE -ne 0) { throw 'Extracting Electron application failed' }
+          $pkg=Get-Content (Join-Path $source 'package.json') -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '1.5.0' -or $pkg.updates.github -ne 'ctrlaltandfix/RAMpage') {
+            throw "Unexpected application version or updater feed"
+          }
+          node '.github/patches/apply-shadps4-focus-handoff.js' $source
+          if ($LASTEXITCODE -ne 0) { throw 'Focused game minimisation patch failed' }
+          $env:RAMPAGE_APP_ROOT=$source
+          node --test 'tests/shadps4-focus-handoff.test.js'
+          if ($LASTEXITCODE -ne 0) { throw 'ShadPS4 focus handoff regression test failure' }
+          foreach ($f in @('src\main.js','src\preload.js','src\renderer\app.js')) {
+            node --check (Join-Path $source $f)
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax test failed: $f" }
+          }
+          # Keep this an INTERNAL PREVIEW; do not repack or publish a GitHub release.
+          Copy-Item (Join-Path $source 'src\main.js') "$env:GITHUB_WORKSPACE\patched-main.js"
+          Write-Host 'PASSED: exact official v1.5 main.js patched and tested. No public release was created.'
+
+      - name: Save temporary source review artifact (not installer)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShadPS4-foreground-minimise-source-preview
+          path: patched-main.js
+          retention-days: 7

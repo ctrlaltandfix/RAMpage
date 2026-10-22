@@ -1,0 +1,219 @@
+name: Replace RAMpage 1.5.0 assets with tested ShadPS4 focus handoff
+
+on:
+  push:
+    branches: [chatgpt-shadps4-focus-handoff-preview]
+    paths: ['.github/workflows/replace-rampage-v1.5.0-shadps4-handoff.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rampage-1-5-0-same-version-replacement
+  cancel-in-progress: false
+
+jobs:
+  build-test-and-replace:
+    runs-on: windows-latest
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify currently published 1.5.0 and save original assets
+        run: |
+          $ErrorActionPreference='Stop'
+          $rel=gh api "repos/$env:GH_REPO/releases/tags/v1.5.0" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $rel.tag_name -ne 'v1.5.0') { throw 'Cannot verify existing v1.5.0 release' }
+          $orig=@($rel.assets | Where-Object {$_.name -eq 'RAMpage-Setup-1.5.exe'})
+          $originalSha='b4d4101de9444b4c4435da4029f0d72b6e4c1b0bb7fc85e9041634d68e5d2c9c'
+          if ($orig.Count -ne 1 -or $orig[0].digest -ne "sha256:$originalSha") { throw 'Existing v1.5.0 installer differs from pinned official version' }
+          $base="$env:RUNNER_TEMP\original"
+          New-Item -ItemType Directory -Force $base | Out-Null
+          gh release download v1.5.0 --pattern 'RAMpage-Setup-1.5.exe' --dir $base
+          if ($LASTEXITCODE -ne 0) { throw 'Original setup download failed' }
+          gh release download v1.5.0 --pattern 'RAMpage-Setup-1.5.exe.sha256' --dir $base
+          if ($LASTEXITCODE -ne 0) { throw 'Original checksum download failed' }
+          $actual=(Get-FileHash "$base\RAMpage-Setup-1.5.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $originalSha) { throw 'Original EXE SHA256 changed' }
+          $fileHash=[regex]::Match((Get-Content "$base\RAMpage-Setup-1.5.exe.sha256" -Raw),'(?i)[a-f0-9]{64}').Value.ToLowerInvariant()
+          if ($fileHash -ne $originalSha) { throw 'Original published sidecar hash mismatch' }
+
+      - name: Rebuild 1.5.0 app with minimise-first ShadPS4 fix
+        run: |
+          $ErrorActionPreference='Stop'
+          $expanded="$env:RUNNER_TEMP\expanded"
+          New-Item -ItemType Directory -Force $expanded | Out-Null
+          & 7z x '-y' "-o$expanded" "$env:RUNNER_TEMP\original\RAMpage-Setup-1.5.exe"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot unpack official installer' }
+          $apps=@(Get-ChildItem $expanded -Recurse -File -Filter 'RAMpage.exe' | Where-Object {
+            Test-Path (Join-Path $_.DirectoryName 'resources\app.asar') })
+          if ($apps.Count -ne 1) { throw "Expected one Electron app; found $($apps.Count)" }
+          $target="$env:GITHUB_WORKSPACE\dist\win-unpacked"
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Copy-Item "$($apps[0].DirectoryName)\*" -Destination $target -Recurse -Force
+          $unpacked="$env:RUNNER_TEMP\src"
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" $unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot extract Electron packaged application' }
+          $pkg=Get-Content "$unpacked\package.json" -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '1.5.0' -or $pkg.updates.github -ne 'ctrlaltandfix/RAMpage') {
+            throw 'Original package is not expected version/feed'
+          }
+          node '.github/patches/apply-shadps4-focus-handoff.js' $unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'Targeted source patch failed' }
+          $env:RAMPAGE_APP_ROOT=$unpacked
+          node --test 'tests/shadps4-focus-handoff.test.js'
+          if ($LASTEXITCODE -ne 0) { throw 'ShadPS4 window handoff regression tests failed' }
+          foreach ($name in @('src\main.js','src\preload.js','src\renderer\app.js','src\updater.js','src\storage.js')) {
+            node --check "$unpacked\$name"
+            if ($LASTEXITCODE -ne 0) { throw "Invalid application JavaScript: $name" }
+          }
+          if ((Get-Content "$unpacked\package.json" -Raw | ConvertFrom-Json).version -ne '1.5.0') {
+            throw 'Version change is forbidden for same-version release'
+          }
+          & npx --yes '@electron/asar@3.4.1' pack $unpacked "$target\resources\app.asar"
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR packaging failed' }
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" "$env:RUNNER_TEMP\packed-verify"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot verify ASAR' }
+          $v=(Get-Content "$env:RUNNER_TEMP\packed-verify\package.json" -Raw | ConvertFrom-Json).version
+          if ($v -ne '1.5.0') { throw "Version must remain 1.5.0, actual $v" }
+          if (!([System.IO.File]::ReadAllText("$env:RUNNER_TEMP\packed-verify\src\main.js")).Contains('ShadPS4 foreground release result: ')) {
+            throw 'Packaged app lacks focus-handoff fix'
+          }
+          Write-Host 'PASS: Patched official v1.5.0 app with unchanged semantic version'
+
+      - name: Compile replacement v1.5 Windows installer
+        run: |
+          $ErrorActionPreference='Stop'
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS installation failed' }
+          $source=Get-Content '.github/patches/rampage-0.2.5-installer.nsi' -Raw
+          if (!$source.Contains('/RELAUNCH') -or !$source.Contains('installed-build.txt') -or !$source.Contains('Preserve $APPDATA')) {
+            throw 'Unsafe installer template'
+          }
+          $script=$source.Replace('0.2.5','1.5.0').Replace('0.2 Beta','1.5 Beta')
+          $script=$script.Replace('RAMpage-Setup-0.2.exe','RAMpage-Setup-1.5.exe')
+          $script=$script.Replace('..\..\dist\','dist\')
+          if (!$script.Contains('VIProductVersion "1.5.0.0"') -or !$script.Contains('FileWrite $0 "1.5.0"')) {
+            throw 'Installer version was not retained'
+          }
+          [System.IO.File]::WriteAllText('rampage-v1.5-focus-handoff.nsi',$script)
+          $makensis="${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $makensis)) { $makensis=(Get-Command makensis -ErrorAction Stop).Source }
+          & $makensis -V3 -INPUTCHARSET UTF8 'rampage-v1.5-focus-handoff.nsi'
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS compilation failed' }
+          $exe='dist\RAMpage-Setup-1.5.exe'
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 100000000) { throw 'Replacement installer missing or invalid' }
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -eq 'b4d4101de9444b4c4435da4029f0d72b6e4c1b0bb7fc85e9041634d68e5d2c9c') { throw 'Replacement installer is identical to original' }
+          [System.IO.File]::WriteAllText("$exe.sha256", "$hash  RAMpage-Setup-1.5.exe"+[Environment]::NewLine)
+          Write-Host "New v1.5.0 binary SHA256 $hash"
+
+      - name: Validate installing v1.5.0 over v1.5.0 without deleting user data
+        run: |
+          $ErrorActionPreference='Stop'
+          $installed="$env:LOCALAPPDATA\Programs\RAMpage"
+          $roaming="$env:APPDATA\RAMpage"
+          $local="$env:LOCALAPPDATA\RAMpage\data"
+          New-Item -ItemType Directory -Force $roaming,$local | Out-Null
+          $sentinel=[guid]::NewGuid().ToString()
+          Set-Content "$roaming\installer-sentinel.txt" $sentinel
+          Set-Content "$local\installer-sentinel.txt" $sentinel
+          $old=Start-Process "$env:RUNNER_TEMP\original\RAMpage-Setup-1.5.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($old.ExitCode -ne 0 -or !(Test-Path "$installed\resources\app.asar")) { throw 'Original version did not install' }
+          $origAsar=(Get-FileHash "$installed\resources\app.asar" -Algorithm SHA256).Hash
+          $nextAsar=(Get-FileHash "$env:GITHUB_WORKSPACE\dist\win-unpacked\resources\app.asar" -Algorithm SHA256).Hash
+          if ($origAsar -eq $nextAsar) { throw 'Patched application content is unchanged' }
+          $upgrade=Start-Process "$env:GITHUB_WORKSPACE\dist\RAMpage-Setup-1.5.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw 'Same-version replacement failed' }
+          if ((Get-Content "$installed\installed-build.txt" -Raw).Trim() -ne '1.5.0') { throw 'Version marker changed unexpectedly' }
+          & npx --yes '@electron/asar@3.4.1' extract "$installed\resources\app.asar" "$env:RUNNER_TEMP\installed-verify"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read newly installed app' }
+          if ((Get-Content "$env:RUNNER_TEMP\installed-verify\package.json" -Raw | ConvertFrom-Json).version -ne '1.5.0') {
+            throw 'Installed application version no longer 1.5.0'
+          }
+          if (!([System.IO.File]::ReadAllText("$env:RUNNER_TEMP\installed-verify\src\main.js")).Contains('ShadPS4 foreground release result: ')) {
+            throw 'Installed application missing ShadPS4 focus fix'
+          }
+          foreach ($dir in @($roaming,$local)) {
+            if ((Get-Content "$dir\installer-sentinel.txt" -Raw).Trim() -ne $sentinel) { throw "Data deleted from $dir" }
+          }
+          Write-Host 'PASS: original v1.5.0 -> revised v1.5.0 same-version reinstall; both user data locations preserved'
+
+      - name: Back up original v1.5.0 installer and checksum before replacing
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAMpage-v1.5.0-original-installer-backup
+          path: |
+            ${{ runner.temp }}/original/RAMpage-Setup-1.5.exe
+            ${{ runner.temp }}/original/RAMpage-Setup-1.5.exe.sha256
+          retention-days: 30
+
+      - name: Replace installer and sha256 on existing v1.5.0 release
+        run: |
+          $ErrorActionPreference='Stop'
+          $binary='dist\RAMpage-Setup-1.5.exe'
+          $sidecar="$binary.sha256"
+          $newHash=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+          if (!([System.IO.File]::ReadAllText($sidecar)).StartsWith($newHash)) { throw 'New sidecar hash does not match installer' }
+          try {
+            gh release upload v1.5.0 $binary $sidecar --clobber --repo $env:GH_REPO
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub upload/clobber failed' }
+            $release=gh api "repos/$env:GH_REPO/releases/tags/v1.5.0" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot verify replaced release assets' }
+            $exe=@($release.assets | Where-Object {$_.name -eq 'RAMpage-Setup-1.5.exe'})
+            $sha=@($release.assets | Where-Object {$_.name -eq 'RAMpage-Setup-1.5.exe.sha256'})
+            if ($exe.Count -ne 1 -or $sha.Count -ne 1 -or $exe[0].digest -ne "sha256:$newHash") {
+              throw 'Published binary asset SHA256 mismatch'
+            }
+            Write-Host "PASS: published revised v1.5.0 installer digest $newHash"
+          } catch {
+            Write-Warning "Replacement upload failed: $_"
+            gh release upload v1.5.0 "$env:RUNNER_TEMP\original\RAMpage-Setup-1.5.exe" "$env:RUNNER_TEMP\original\RAMpage-Setup-1.5.exe.sha256" --clobber --repo $env:GH_REPO
+            throw 'Release replacement failure; restoration of original installer attempted'
+          }
+
+      - name: Annotate existing v1.5.0 release with manual-install notice
+        run: |
+          @'
+          ## RAMpage 1.5.0 Beta — ShadPS4 foreground handoff revision
+
+          The same v1.5.0 release and installer filename were retained, as requested.
+          The installer now contains a ShadPS4-only workaround: when the game is
+          foreground and you press Xbox Guide/Home, RAMpage attempts to minimise
+          that ShadPS4 window before opening Quick Access inside RAMpage.
+          Select Return to ShadPS4 to go back to the running game.
+
+          **IMPORTANT:** v1.5.0 users must manually reinstall this revised binary.
+          The built-in updater compares semantic version numbers and does NOT
+          offer an update when the installed version is already v1.5.0.
+          Close RAMpage, download RAMpage-Setup-1.5.exe from here, and run it.
+          The per-user installer preserves saved games, settings and artwork.
+
+          Windows CI verified the guarded patch, unit tests, NSIS installer,
+          same-version reinstall, version markers, and preservation of user data.
+          Actual behavior in a ShadPS4 game has not been visually validated.
+          This minimises the game to access Quick Access; it is not a Vulkan overlay.
+          '@ | Set-Content 'release-notes-v1.5-revised.md'
+          gh release edit v1.5.0 --title 'RAMpage 1.5.0 Beta — ShadPS4 handoff revision' --notes-file 'release-notes-v1.5-revised.md' --repo $env:GH_REPO
+          if ($LASTEXITCODE -ne 0) { throw 'Assets replaced, but updating release notes failed' }
+
+      - name: Verify latest GitHub release still serves the new v1.5.0 installer
+        run: |
+          $release=gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.tag_name -ne 'v1.5.0') { throw 'Latest release semantic version changed' }
+          $installer=@($release.assets | Where-Object { $_.name -eq 'RAMpage-Setup-1.5.exe' })
+          $sha=@($release.assets | Where-Object { $_.name -eq 'RAMpage-Setup-1.5.exe.sha256' })
+          $hash=(Get-FileHash 'dist\RAMpage-Setup-1.5.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($installer.Count -ne 1 -or $sha.Count -ne 1 -or $installer[0].digest -ne "sha256:$hash") {
+            throw 'Latest release replacement asset verification failed'
+          }
+          Write-Host "SUCCESS: latest v1.5.0 retains version but installer SHA256 is $hash"

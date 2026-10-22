@@ -1,0 +1,61 @@
+name: Diagnose packaged-app rebuild steps for RAMpage 1.5.0
+on:
+  push:
+    branches: [chatgpt-shadps4-focus-handoff-preview]
+    paths: ['.github/workflows/diagnose-rampage-v1.5.0-repack.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Download original binary
+        timeout-minutes: 5
+        run: |
+          gh release download v1.5.0 --pattern RAMpage-Setup-1.5.exe --dir "$env:RUNNER_TEMP"
+          if ($LASTEXITCODE -ne 0) { throw 'Download failed' }
+          $digest=(Get-FileHash "$env:RUNNER_TEMP\RAMpage-Setup-1.5.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne 'b4d4101de9444b4c4435da4029f0d72b6e4c1b0bb7fc85e9041634d68e5d2c9c') { throw "Unexpected sha $digest" }
+      - name: Unpack NSIS
+        timeout-minutes: 3
+        run: |
+          & 7z x '-y' "-o$env:RUNNER_TEMP\expanded" "$env:RUNNER_TEMP\RAMpage-Setup-1.5.exe"
+          if ($LASTEXITCODE -ne 0) { throw '7zip failed' }
+      - name: Extract ASAR
+        timeout-minutes: 5
+        run: |
+          $asar=@(Get-ChildItem "$env:RUNNER_TEMP\expanded" -Recurse -File -Filter app.asar)
+          if ($asar.Count -ne 1) { throw "Expected one app.asar, got $($asar.Count)" }
+          Copy-Item $asar[0].FullName "$env:RUNNER_TEMP\original.asar"
+          & npx --yes '@electron/asar@3.4.1' extract "$env:RUNNER_TEMP\original.asar" "$env:RUNNER_TEMP\source"
+          if ($LASTEXITCODE -ne 0) { throw 'Extract ASAR failed' }
+      - name: Apply patch and validate tests
+        timeout-minutes: 4
+        run: |
+          node '.github/patches/apply-shadps4-focus-handoff.js' "$env:RUNNER_TEMP\source"
+          if ($LASTEXITCODE -ne 0) { throw 'Patch failed' }
+          $env:RAMPAGE_APP_ROOT="$env:RUNNER_TEMP\source"
+          node --test tests/shadps4-focus-handoff.test.js
+          if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+      - name: Repack ASAR and inspect changed hash
+        timeout-minutes: 6
+        run: |
+          & npx --yes '@electron/asar@3.4.1' pack "$env:RUNNER_TEMP\source" "$env:RUNNER_TEMP\patched.asar"
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR packing failed' }
+          $before=(Get-FileHash "$env:RUNNER_TEMP\original.asar" -Algorithm SHA256).Hash
+          $after=(Get-FileHash "$env:RUNNER_TEMP\patched.asar" -Algorithm SHA256).Hash
+          if ($before -eq $after) { throw 'Patch did not change app.asar' }
+          Write-Host "PASS: repack changed app hash: $after"
