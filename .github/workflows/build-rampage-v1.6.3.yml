@@ -1,0 +1,256 @@
+name: RAMpage v1.6.3 Hydra Disclaimer in Settings and Remote Library
+
+on:
+  push:
+    branches: [chatgpt-hydra-disclaimer-v1.6.3]
+    paths: ['.github/workflows/build-rampage-v1.6.3.yml']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rampage-hydra-disclaimer-v1.6.3
+  cancel-in-progress: false
+
+jobs:
+  test-build-publish:
+    runs-on: windows-latest
+    timeout-minutes: 65
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Check Hydra disclaimer patch and regression test syntax
+        run: |
+          $ErrorActionPreference='Stop'
+          foreach($file in @('scripts\apply-hydra-disclaimer.js','tests\hydra-disclaimer.test.js')){
+            & node --check $file
+            if($LASTEXITCODE -ne 0){throw "Invalid disclaimer source $file"}
+          }
+
+      - name: Ensure release does not already exist
+        run: |
+          $existing = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($existing | Where-Object { $_.tagName -eq 'v1.6.3' }).Count -gt 0) { throw 'Release v1.6.3 already exists, refusing overwrite.' }
+
+      - name: Download and verify official v1.6.2 release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -Type Directory -Force "$env:RUNNER_TEMP\old" | Out-Null
+          gh release download v1.6.2 --pattern 'RAMpage-Setup-1.6.2.exe' --dir "$env:RUNNER_TEMP\old"
+          if ($LASTEXITCODE -ne 0) { throw 'Download v1.6.2 failed' }
+          gh release download v1.6.2 --pattern 'RAMpage-Setup-1.6.2.exe.sha256' --dir "$env:RUNNER_TEMP\old"
+          if ($LASTEXITCODE -ne 0) { throw 'Download v1.6.2 checksum failed' }
+          $exe = "$env:RUNNER_TEMP\old\RAMpage-Setup-1.6.2.exe"
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne '7aea321431fa940f5c3f97c0f69b5976f444a4a8801a81ac16b2635dcd794b79') {
+            throw "Unexpected source binary digest $hash"
+          }
+          $sum = [regex]::Match((Get-Content "$exe.sha256" -Raw),'(?i)[a-f0-9]{64}').Value.ToLowerInvariant()
+          if ($sum -ne $hash) { throw 'Official release SHA-256 file mismatch' }
+          Write-Host "Verified official v1.6.2 digest: $hash"
+
+      - name: Repackage authentic v1.6.2 app as v1.6.3
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expanded = "$env:RUNNER_TEMP\expanded"
+          New-Item -ItemType Directory -Force $expanded | Out-Null
+          & 7z x '-y' "-o$expanded" "$env:RUNNER_TEMP\old\RAMpage-Setup-1.6.2.exe"
+          if ($LASTEXITCODE -ne 0) { throw '7z source-installer extraction failed' }
+          $candidates = @(Get-ChildItem $expanded -Recurse -File -Filter 'RAMpage.exe' | Where-Object {
+            Test-Path (Join-Path $_.DirectoryName 'resources\app.asar') })
+          if ($candidates.Count -ne 1) { throw "Expected 1 Electron app, got $($candidates.Count)" }
+          $target = "$env:GITHUB_WORKSPACE\dist\win-unpacked"
+          New-Item -ItemType Directory -Force $target | Out-Null
+          Copy-Item -Path "$($candidates[0].DirectoryName)\*" -Destination $target -Recurse -Force
+          $unpacked = "$env:RUNNER_TEMP\source"
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" $unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR extraction failed' }
+          $manifest = "$unpacked\package.json"
+          $pkg = Get-Content $manifest -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '1.6.2') { throw "Unexpected embedded version $($pkg.version)" }
+          if ($pkg.updates.github -ne 'ctrlaltandfix/RAMpage') { throw 'Wrong in-app updater feed' }
+          # Only add explanatory copy to Hydra desktop Settings and conditional
+          # authenticated remote-library view. No API or metadata/persistence change.
+          $mainBefore=(Get-FileHash "$unpacked\src\main.js" -Algorithm SHA256).Hash
+          $serverBefore=(Get-FileHash "$unpacked\src\remote-library.js" -Algorithm SHA256).Hash
+          $providerBefore=(Get-FileHash "$unpacked\src\hydra-remote-provider.js" -Algorithm SHA256).Hash
+          $updaterBefore=(Get-FileHash "$unpacked\src\updater.js" -Algorithm SHA256).Hash
+          $before=[System.IO.File]::ReadAllText((Join-Path $unpacked 'src\main.js'))
+          if(!$before.Contains('ShadPS4 foreground release result: ') -or
+             !$before.Contains("ipcMain.handle('remote:tunnel-start'") -or
+             !$before.Contains("ipcMain.handle('hydra:remote-configure'")){
+            throw 'Original 1.6.2 baseline lacks Hydra opt-in, Quick Tunnel, or ShadPS4'
+          }
+          node 'scripts/apply-hydra-disclaimer.js' $unpacked
+          if($LASTEXITCODE -ne 0){throw 'Hydra disclaimer patch failed'}
+          $env:RAMPAGE_APP_ROOT=$unpacked
+          node --test 'tests/hydra-disclaimer.test.js'
+          if($LASTEXITCODE -ne 0){throw 'Hydra disclaimer regression failed'}
+          foreach ($item in @(
+            @{file='src\main.js';sha=$mainBefore},
+            @{file='src\remote-library.js';sha=$serverBefore},
+            @{file='src\hydra-remote-provider.js';sha=$providerBefore},
+            @{file='src\updater.js';sha=$updaterBefore}
+          )){
+            if((Get-FileHash "$unpacked\$($item.file)" -Algorithm SHA256).Hash -ne $item.sha){
+              throw "Unintended functional change to $($item.file)"
+            }
+          }
+          $pkg.version = '1.6.3'
+          [System.IO.File]::WriteAllText($manifest, ($pkg | ConvertTo-Json -Depth 100))
+          foreach ($source in @('src\hydra-remote-provider.js','src\remote-quick-tunnel.js','src\main.js','src\remote-library.js','src\remote\client.js','src\preload.js','src\quick-access-presenter.js','src\quick-access-policy.js','src\storage.js','src\updater.js','src\renderer\app.js')) {
+            & node --check "$unpacked\$source"
+            if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $source" }
+          }
+          & npx --yes '@electron/asar@3.4.1' pack $unpacked "$target\resources\app.asar"
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR repack failed' }
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" "$env:RUNNER_TEMP\verify"
+          if ($LASTEXITCODE -ne 0) { throw 'ASAR verification extract failed' }
+          $checkVer = (Get-Content "$env:RUNNER_TEMP\verify\package.json" -Raw | ConvertFrom-Json).version
+          if ($checkVer -ne '1.6.3') { throw "Repacked application version was $checkVer" }
+          $verifyMain=[System.IO.File]::ReadAllText("$env:RUNNER_TEMP\verify\src\main.js")
+          if (!$verifyMain.Contains("ipcMain.handle('hydra:remote-configure'") -or
+              !$verifyMain.Contains("ipcMain.handle('remote:tunnel-start'") -or
+              !$verifyMain.Contains("ipcMain.handle('remote:configure'") -or
+              !(Test-Path "$env:RUNNER_TEMP\verify\src\remote\index.html")) {
+            throw 'Remote library was not embedded in the Electron ASAR'
+          }
+          $verifyText = [System.IO.File]::ReadAllText("$env:RUNNER_TEMP\verify\src\main.js")
+          if (!$verifyText.Contains('ShadPS4 foreground release result: ')) { throw 'Packaged v1.6.3 lost the ShadPS4 fix' }
+          foreach($file in @('src\renderer\app.js','src\remote\client.js','src\remote\index.html')){
+            $text=[System.IO.File]::ReadAllText("$env:RUNNER_TEMP\verify\$file")
+            if(!$text.Contains('pirated or otherwise unauthorised games or content') -and
+               $file -ne 'src\remote\client.js'){
+              throw "No Hydra disclaimer found in packaged $file"
+            }
+          }
+          Write-Host "Repacked verified copy-only disclaimer app, version $checkVer"
+
+      - name: Build Windows updater-compatible installer
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco install nsis --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS install failed' }
+          $script = Get-Content '.github/patches/rampage-0.2.5-installer.nsi' -Raw
+          if (!$script.Contains('/RELAUNCH') -or !$script.Contains('installed-build.txt') -or
+              !$script.Contains('Preserve $APPDATA')) { throw 'Base installer lacks safe update facilities' }
+          $script = $script.Replace('0.2.5','1.6.3').Replace('0.2 Beta','1.6 Beta')
+          $script = $script.Replace('RAMpage-Setup-0.2.exe','RAMpage-Setup-1.6.3.exe')
+          $script = $script.Replace('..\..\dist\','dist\')
+          if (!$script.Contains('VIProductVersion "1.6.3.0"') -or
+              !$script.Contains('FileWrite $0 "1.6.3"')) { throw 'Version substitution failed' }
+          [System.IO.File]::WriteAllText('rampage-1.6-installer.nsi',$script)
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
+          & $nsis -V3 -INPUTCHARSET UTF8 'rampage-1.6-installer.nsi'
+          if ($LASTEXITCODE -ne 0) { throw 'NSIS compilation failed' }
+          $file = 'dist\RAMpage-Setup-1.6.3.exe'
+          if (!(Test-Path $file) -or (Get-Item $file).Length -lt 100000000) {
+            throw 'New installer invalid or unexpectedly small'
+          }
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$file.sha256", "$hash  RAMpage-Setup-1.6.3.exe"+[Environment]::NewLine)
+          Write-Host "Version 1.6.3 Windows installer SHA256: $hash"
+
+      - name: Test real 1.6.2 to 1.6.3 in-place silent install on Windows
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installed = "$env:LOCALAPPDATA\Programs\RAMpage"
+          $roaming = "$env:APPDATA\RAMpage"
+          $local = "$env:LOCALAPPDATA\RAMpage\data"
+          New-Item -Type Directory -Force $roaming,$local | Out-Null
+          $marker = [guid]::NewGuid().ToString()
+          Set-Content "$roaming\upgrade-sentinel.txt" $marker
+          Set-Content "$local\upgrade-sentinel.txt" $marker
+          $oldInstall = Start-Process "$env:RUNNER_TEMP\old\RAMpage-Setup-1.6.2.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($oldInstall.ExitCode -ne 0) { throw "Old install failed with $($oldInstall.ExitCode)" }
+          if (!(Test-Path "$installed\RAMpage.exe")) { throw 'v1.6.2 installation missing' }
+          $upgrade = Start-Process "$env:GITHUB_WORKSPACE\dist\RAMpage-Setup-1.6.3.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($upgrade.ExitCode -ne 0) { throw "v1.6.3 update failed with $($upgrade.ExitCode)" }
+          if ((Get-Content "$installed\installed-build.txt" -Raw).Trim() -ne '1.6.3') {
+            throw 'Installed-build marker is incorrect'
+          }
+          & npx --yes '@electron/asar@3.4.1' extract "$installed\resources\app.asar" "$env:RUNNER_TEMP\installed"
+          if ($LASTEXITCODE -ne 0) { throw 'Installed app.asar cannot be verified' }
+          $installedVer = (Get-Content "$env:RUNNER_TEMP\installed\package.json" -Raw | ConvertFrom-Json).version
+          if ($installedVer -ne '1.6.3') { throw "Installed application version is $installedVer" }
+          if(!(Test-Path "$installed\tools\cloudflared.exe")){throw 'Bundled Cloudflare tool missing'}
+          $tunnelHash=(Get-FileHash "$installed\tools\cloudflared.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($tunnelHash -ne '4d2490e74082c5d48dbfedaf92576fa5bd1702379ab88eb7faa0cfbe8dc891b6'){throw 'Installed tunnelling executable digest mismatch'}
+          if(!(Test-Path "$env:RUNNER_TEMP\installed\src\remote-quick-tunnel.js")){throw 'Installed app missing Quick Tunnel manager'}
+          if(!(Test-Path "$installed\tools\cloudflared.exe")){throw 'Previous secure remote access functionality not preserved'}
+          if(!(Test-Path "$installed\tools\hydra-bridge\node.exe") -or
+             !(Test-Path "$installed\tools\hydra-bridge\reader.js")){throw 'Hydra reader absent from installed app'}
+          if(!(Test-Path "$env:RUNNER_TEMP\installed\src\hydra-remote-provider.js")){throw 'Hydra opt-in module absent from packaged app'}
+          $settingsText=[System.IO.File]::ReadAllText("$env:RUNNER_TEMP\installed\src\renderer\app.js")
+          $remoteHtml=[System.IO.File]::ReadAllText("$env:RUNNER_TEMP\installed\src\remote\index.html")
+          if(!$settingsText.Contains('Hydra Launcher is an alternative game launcher') -or
+             !$remoteHtml.Contains('It does not provide, download, distribute')) {
+            throw 'Shipped Windows app missing the Hydra disclaimer'
+          }
+          $mainInstalled=[System.IO.File]::ReadAllText("$env:RUNNER_TEMP\installed\src\main.js")
+          if(!$mainInstalled.Contains("ipcMain.handle('hydra:remote-configure'")){throw 'Desktop Hydra opt-in missing'}
+          foreach ($dir in @($roaming,$local)) {
+            if ((Get-Content "$dir\upgrade-sentinel.txt" -Raw).Trim() -ne $marker) {
+              throw "User data was changed or lost in $dir"
+            }
+          }
+          Write-Host 'PASSED: in-place Windows upgrade 1.6.2 -> 1.6.3, app version, marker and user data preserved'
+
+      - name: Publish version 1.6.3 only after installer tests pass
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $existing = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          if (@($existing | Where-Object { $_.tagName -eq 'v1.6.3' }).Count -gt 0) { throw 'Existing release may not be overwritten' }
+          @'
+          ## RAMpage 1.6.3 Beta — Hydra integration disclaimer
+
+          Added a clear notice beneath **Hydra Launcher integration** in
+          RAMpage desktop Settings, and in the password-protected remote
+          library when Hydra records are available.
+
+          **Disclaimer:** Hydra Launcher is an alternative game launcher.
+          RAMpage's optional Hydra integration only lets you view library
+          information and edit RAMpage metadata. It does not provide,
+          download, distribute, or grant access to pirated or otherwise
+          unauthorised games or content.
+
+          The notice appears in the remote library only after Hydra games
+          are available. Hydra integration remains disabled by default.
+
+          All existing library functionality, Cloudflare one-click HTTPS
+          access, authentication, Hydra metadata overrides, user data
+          and ShadPS4 Quick Access are unchanged.
+
+          Windows CI validates the shipped text, conditional visibility,
+          unchanged server/updater code, upgrade, and data preservation.
+          '@ | Set-Content 'release-notes-v1.6.3-remote.md'
+          gh release create v1.6.3 'dist/RAMpage-Setup-1.6.3.exe' 'dist/RAMpage-Setup-1.6.3.exe.sha256' --title 'RAMpage 1.6.3 Beta' --notes-file 'release-notes-v1.6.3-remote.md' --target main --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub publication failed' }
+
+      - name: Verify published release through authenticated GitHub API
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $release = $null
+          for ($i = 0; $i -lt 6; $i++) {
+            $release = gh api "repos/$env:GH_REPO/releases/latest" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'GitHub release check failed' }
+            if ($release.tag_name -eq 'v1.6.3') { break }
+            Start-Sleep -Seconds 5
+          }
+          if ($release.tag_name -ne 'v1.6.3') { throw "Latest release is $($release.tag_name), not v1.6.3" }
+          $exe = @($release.assets | Where-Object { $_.name -eq 'RAMpage-Setup-1.6.3.exe' })
+          $sha = @($release.assets | Where-Object { $_.name -eq 'RAMpage-Setup-1.6.3.exe.sha256' })
+          if ($exe.Count -ne 1 -or $sha.Count -ne 1 -or $exe[0].size -lt 100000000) {
+            throw 'Latest-release installer or checksum is missing'
+          }
+          Write-Host 'PASS: v1.6.3 is latest release and installer+checksum are available'
