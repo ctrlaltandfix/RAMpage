@@ -15,7 +15,7 @@ test('minimisation targets only foreground shadPS4 window and no other app', () 
   assert.match(ps,/GetForegroundWindow\(\)/);
   assert.match(ps,/GetWindowThreadProcessId/);
   assert.match(ps,/ProcessName -notmatch.*shadps4/);
-  assert.ok(ps.indexOf('SKIPPED_OTHER_FOREGROUND')<ps.indexOf('ShowWindowAsync'),
+  assert.ok(ps.indexOf('SKIPPED_OTHER_FOREGROUND')<ps.indexOf('[RPRescueHandoff]::ShowWindowAsync($hwnd'),
     'Must reject all other processes before any window action');
   assert.match(ps,/ShowWindowAsync\(\$hwnd, 6\)/);
   assert.match(ps,/IsIconic\(\$hwnd\)/);
