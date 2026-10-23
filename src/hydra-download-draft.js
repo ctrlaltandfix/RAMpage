@@ -19,7 +19,7 @@ function createHydraDownloadDraft(raw,{now=Date.now(),random=()=>crypto.randomBy
    hydraDownloadDraft:true,hydraDownloadStatus:'awaiting-install',
    addedAt:now,art:{},favorite:false,hidden:false,playtimeSec:0,lastPlayed:null,
    notes:'Not downloaded yet. Use Hydra Launcher to search and select an available download.',
-   launch:{type:'uri',target:''},exePath:null,installDir:null};
+   launch:{type:'exe',target:'',args:'',cwd:''},exePath:null,installDir:null};
 }
 function sanitizedOptions(result,term){
  const title=cleanTitle(term).toLowerCase();
