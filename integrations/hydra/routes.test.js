@@ -82,6 +82,6 @@ test("web client sends same-origin credentials and CSRF", async () => {
   });
   await client.queue("game:1", "option:1");
   assert.equal(calls[0].options.credentials, "same-origin");
-  assert.equal(calls[0].options.headers["X-CSRF-Token"], "csrf");
+  assert.equal(calls[0].options.headers["X-Rampage-CSRF"], "csrf");
   assert.equal(calls[0].url, "/api/hydra/bridge/command");
 });
