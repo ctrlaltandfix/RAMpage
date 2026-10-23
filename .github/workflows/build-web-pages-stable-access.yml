@@ -1,0 +1,137 @@
+name: RAMpage 1.6.9 game pages and stable remote access candidate
+on:
+  push:
+    branches: [chatgpt-web-pages-stable-access]
+    paths:
+      - 'scripts/apply-web-pages-stable-access.js'
+      - 'tests/web-pages-stable-access.test.js'
+      - '.github/workflows/build-web-pages-stable-access.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rampage-v169-dev-integration
+  cancel-in-progress: true
+jobs:
+  candidate-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Recover and verify official RAMpage 1.6.8
+        run: |
+          $ErrorActionPreference='Stop'
+          $old="$env:RUNNER_TEMP\old"
+          New-Item -Type Directory -Force $old | Out-Null
+          gh release download v1.6.8 --pattern 'RAMpage-Setup-1.6.8.exe' --dir $old
+          if($LASTEXITCODE -ne 0){throw 'Official v1.6.8 installer download failed'}
+          gh release download v1.6.8 --pattern 'RAMpage-Setup-1.6.8.exe.sha256' --dir $old
+          if($LASTEXITCODE -ne 0){throw 'Official SHA file download failed'}
+          $exe=Join-Path $old 'RAMpage-Setup-1.6.8.exe'
+          $hash=(Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne '7e7bd0b77b0b5d0785407a9827610c7dd916eb82345d861f05833be8209a4033'){
+            throw "v1.6.8 source checksum mismatch: $hash"
+          }
+          $sum=[regex]::Match((Get-Content "$exe.sha256" -Raw),'(?i)[0-9a-f]{64}').Value.ToLowerInvariant()
+          if($hash -ne $sum){throw 'Official SHA checksum file does not match'}
+          & 7z x '-y' "-o$env:RUNNER_TEMP\expanded" $exe | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'Official installer extraction failed'}
+          $candidates=@(Get-ChildItem "$env:RUNNER_TEMP\expanded" -Recurse -File -Filter RAMpage.exe | Where-Object {
+            Test-Path (Join-Path $_.DirectoryName 'resources\app.asar')})
+          if($candidates.Count -ne 1){throw 'Expected exactly one unpacked RAMpage.exe'}
+          $target="$env:GITHUB_WORKSPACE\dist\win-unpacked"
+          New-Item -Type Directory -Force $target | Out-Null
+          Copy-Item -Path (Join-Path $candidates[0].DirectoryName '*') -Destination $target -Recurse -Force
+          & npx --yes '@electron/asar@3.4.1' extract "$target\resources\app.asar" "$env:RUNNER_TEMP\app"
+          if($LASTEXITCODE -ne 0){throw 'ASAR extraction failed'}
+          $pkg=Get-Content "$env:RUNNER_TEMP\app\package.json" -Raw | ConvertFrom-Json
+          if($pkg.version -ne '1.6.8' -or $pkg.updates.github -ne 'ctrlaltandfix/RAMpage'){
+            throw 'Official app metadata mismatch'
+          }
+      - name: Patch and integration-test real packaged application
+        run: |
+          $ErrorActionPreference='Stop'
+          $root="$env:RUNNER_TEMP\app"
+          node scripts/apply-web-pages-stable-access.js $root
+          if($LASTEXITCODE -ne 0){throw 'Production Hydra bridge patch failed'}
+          $env:RAMPAGE_APP_ROOT=$root
+          node --test tests/web-pages-stable-access.test.js tests/hydra-bridge-production.test.js tests/hydra-bridge-connected.test.js
+          if($LASTEXITCODE -ne 0){throw 'Real authenticated production RAMpage bridge tests failed'}
+          foreach($file in @('src/remote-library.js','src/remote-quick-tunnel.js','src/remote/client.js','src/main.js','src/preload.js','src/renderer/app.js')){
+            node --check (Join-Path $root $file)
+            if($LASTEXITCODE -ne 0){throw "Syntax failed: $file"}
+          }
+          $manifest=Join-Path $root 'package.json'
+          $pkg=Get-Content $manifest -Raw | ConvertFrom-Json
+          $pkg.version='1.6.9'
+          [System.IO.File]::WriteAllText($manifest,($pkg|ConvertTo-Json -Depth 100))
+          & npx --yes '@electron/asar@3.4.1' pack $root "$env:GITHUB_WORKSPACE\dist\win-unpacked\resources\app.asar"
+          if($LASTEXITCODE -ne 0){throw 'Repack failed'}
+          & npx --yes '@electron/asar@3.4.1' extract "$env:GITHUB_WORKSPACE\dist\win-unpacked\resources\app.asar" "$env:RUNNER_TEMP\verify"
+          if($LASTEXITCODE -ne 0){throw 'Repack verification failed'}
+          $v=(Get-Content "$env:RUNNER_TEMP\verify\package.json" -Raw|ConvertFrom-Json).version
+          if($v -ne '1.6.9'){throw 'Repacked version mismatch'}
+          if(!(Test-Path "$env:RUNNER_TEMP\verify\src\hydra-bridge\routes.js") -or
+             !(Test-Path "$env:RUNNER_TEMP\verify\src\remote\client.js")){throw 'Integration files not packaged'}
+          if(!(Get-Content "$env:RUNNER_TEMP\verify\src\main.js" -Raw).Contains('ShadPS4 foreground release result: ')){throw 'ShadPS4 feature lost'}
+      - name: Build development-only Windows installer (do not publish)
+        run: |
+          $ErrorActionPreference='Stop'
+          choco install nsis --yes --no-progress
+          if($LASTEXITCODE -ne 0){throw 'NSIS unavailable'}
+          $script=Get-Content '.github/patches/rampage-0.2.5-installer.nsi' -Raw
+          if(!$script.Contains('/RELAUNCH') -or !$script.Contains('installed-build.txt') -or !$script.Contains('Preserve $APPDATA')){
+            throw 'Original updater-safe NSIS checks failed'
+          }
+          $script=$script.Replace('0.2.5','1.6.9').Replace('0.2 Beta','1.6 Beta')
+          $script=$script.Replace('RAMpage-Setup-0.2.exe','RAMpage-Setup-1.6.9.exe')
+          $script=$script.Replace('..\..\dist\','dist\')
+          [System.IO.File]::WriteAllText('rampage-1.6.9-dev-installer.nsi',$script)
+          $nsis="${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if(!(Test-Path $nsis)){$nsis=(Get-Command makensis -ErrorAction Stop).Source}
+          & $nsis -V3 -INPUTCHARSET UTF8 'rampage-1.6.9-dev-installer.nsi'
+          if($LASTEXITCODE -ne 0){throw 'NSIS compilation failed'}
+          $file='dist\RAMpage-Setup-1.6.9.exe'
+          if(!(Test-Path $file) -or (Get-Item $file).Length -lt 100000000){throw 'Installer missing or too small'}
+          $hash=(Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content "$file.sha256" "$hash  RAMpage-Setup-1.6.9.exe"
+          Write-Host "DEVELOPMENT INSTALLER ONLY SHA256: $hash"
+      - name: Test Windows 1.6.8 to 1.6.9-dev in-place upgrade and data preservation
+        run: |
+          $ErrorActionPreference='Stop'
+          $installed="$env:LOCALAPPDATA\Programs\RAMpage"
+          $roaming="$env:APPDATA\RAMpage";$local="$env:LOCALAPPDATA\RAMpage\data"
+          New-Item -Type Directory -Force $roaming,$local | Out-Null
+          $marker=[guid]::NewGuid().ToString()
+          Set-Content "$roaming\v169-upgrade-sentinel.txt" $marker
+          Set-Content "$local\v169-upgrade-sentinel.txt" $marker
+          $old=Start-Process "$env:RUNNER_TEMP\old\RAMpage-Setup-1.6.8.exe" -ArgumentList '/S' -Wait -PassThru
+          if($old.ExitCode -ne 0){throw "v1.6.8 setup failed: $($old.ExitCode)"}
+          $new=Start-Process "$env:GITHUB_WORKSPACE\dist\RAMpage-Setup-1.6.9.exe" -ArgumentList '/S' -Wait -PassThru
+          if($new.ExitCode -ne 0){throw "v1.6.9 development setup failed: $($new.ExitCode)"}
+          if((Get-Content "$installed\installed-build.txt" -Raw).Trim() -ne '1.6.9'){throw 'Invalid installed version marker'}
+          if((Get-Content "$roaming\v169-upgrade-sentinel.txt" -Raw).Trim() -ne $marker -or
+             (Get-Content "$local\v169-upgrade-sentinel.txt" -Raw).Trim() -ne $marker){
+             throw 'Application data was not preserved'
+          }
+          & npx --yes '@electron/asar@3.4.1' extract "$installed\resources\app.asar" "$env:RUNNER_TEMP\installed"
+          if($LASTEXITCODE -ne 0){throw 'Installed ASAR verification failed'}
+          $installedVersion=(Get-Content "$env:RUNNER_TEMP\installed\package.json" -Raw|ConvertFrom-Json).version
+          if($installedVersion -ne '1.6.9'){throw 'Wrong installed application version'}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RAMpage-1.6.9-candidate-installer
+          path: |
+            dist/RAMpage-Setup-1.6.9.exe
+            dist/RAMpage-Setup-1.6.9.exe.sha256
+          retention-days: 7
+          if-no-files-found: error
