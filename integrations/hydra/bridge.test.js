@@ -6,6 +6,7 @@ const { createHydraBridge, BridgeError } = require("./bridge");
 const allowed = { authenticated: true, hydraEnabled: true, canManageDownloads: true, csrfValidated: true };
 const companion = {
   supported: true,
+  async ping() { return true; },
   async search() {
     return [{ id: "steam:123", title: "Sample Game", optionCount: 2, magnet: "private", token: "secret" }];
   },
