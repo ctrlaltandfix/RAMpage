@@ -1,12 +1,5 @@
 name: RAMpage v1.6.8 Hydra bridge integration candidate
 on:
-  push:
-    branches: [chatgpt-hydra-bridge-v1.6.8]
-    paths:
-      - '.github/workflows/build-hydra-bridge-v1.6.8-dev.yml'
-      - 'scripts/apply-hydra-bridge-v1.6.8.js'
-      - 'tests/hydra-bridge-production.test.js'
-      - 'integrations/hydra/**'
   pull_request:
     paths:
       - '.github/workflows/build-hydra-bridge-v1.6.8-dev.yml'
@@ -39,11 +32,11 @@ jobs:
           $ErrorActionPreference='Stop'
           foreach($file in @('scripts/apply-hydra-bridge-v1.6.8.js','tests/hydra-bridge-production.test.js',
             'integrations/hydra/bridge.js','integrations/hydra/routes.js',
-            'integrations/hydra/web-client.js','integrations/hydra/web-panel.js')){
+            'integrations/hydra/web-client.js','integrations/hydra/web-panel.js','integrations/hydra/companion-client.js')){
             node --check $file
             if($LASTEXITCODE -ne 0){throw "Syntax error: $file"}
           }
-          node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js integrations/hydra/web-panel.test.js
+          node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js integrations/hydra/web-panel.test.js integrations/hydra/companion-client.test.js
           if($LASTEXITCODE -ne 0){throw 'Bridge unit tests failed'}
       - name: Recover and verify official RAMpage 1.6.7
         run: |
