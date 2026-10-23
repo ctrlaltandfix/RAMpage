@@ -4,6 +4,7 @@ on:
     paths:
       - '.github/workflows/build-hydra-bridge-v1.6.8-dev.yml'
       - 'scripts/apply-hydra-bridge-v1.6.8.js'
+      - 'scripts/apply-hydra-desktop-panel.js'
       - 'tests/hydra-bridge-production.test.js'
       - 'tests/hydra-bridge-connected.test.js'
       - 'integrations/hydra/**'
@@ -31,7 +32,7 @@ jobs:
       - name: Check development patch and bridge tests
         run: |
           $ErrorActionPreference='Stop'
-          foreach($file in @('scripts/apply-hydra-bridge-v1.6.8.js','tests/hydra-bridge-production.test.js','tests/hydra-bridge-connected.test.js',
+          foreach($file in @('scripts/apply-hydra-bridge-v1.6.8.js','scripts/apply-hydra-desktop-panel.js','tests/hydra-bridge-production.test.js','tests/hydra-bridge-connected.test.js',
             'integrations/hydra/bridge.js','integrations/hydra/routes.js',
             'integrations/hydra/web-client.js','integrations/hydra/web-panel.js','integrations/hydra/companion-client.js')){
             node --check $file
