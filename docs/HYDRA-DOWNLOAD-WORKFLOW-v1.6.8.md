@@ -18,6 +18,7 @@ The requested interface sequence is:
 - Limited, safe browser payloads use opaque IDs, name, source, size, date, downloader availability, and progress. No magnet, torrent URI, raw credentials, installation command, or local filesystem path is exposed.
 - Per-job local approval is required before `queue` can return success. All bridge actions are hidden if the companion is disconnected; the old cached Hydra index search still works.
 - The official verified v1.6.7 packaged app is patched by `scripts/apply-hydra-bridge-v1.6.8.js`; the web game editor includes the new capability-gated panel alongside the prior cached search.
+- `scripts/apply-hydra-desktop-panel.js` adds **Manage Hydra downloads** inside both native desktop game-detail views, using Electron's trusted preload/API surface and the shared download manager interface. The pre-existing desktop action to open Hydra Launcher remains the fallback.
 - Unit tests cover API authorization, CSRF and origin validation, request redaction, companion authentication, selecting a source/downloader, local-approval rejection, DOM text safety and queue/progress UI.
 - Windows CI builds a **development-only** installer and tests a 1.6.7 → development 1.6.8 upgrade without deleting RAMpage user data.
 
