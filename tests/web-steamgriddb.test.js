@@ -1,0 +1,26 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {RemoteLibraryService}=require(path.join(process.env.RAMPAGE_APP_ROOT,'src/remote-library'));
+test('authenticated web artwork reuses desktop provider without exposing its key, blocks invalid requests and persists selected covers',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'rampage-sgdb-'));let enabled=true,searches=0,fail=false;
+ const games={demo:{id:'demo',name:'Demo',_u:0,meta:{}}};
+ const provider={hasKey:()=>enabled,search:async title=>{searches++;if(fail)throw Error('Authorization: Bearer PRIVATE-KEY');return [{id:123,name:title,releaseYear:2025,key:'PRIVATE-KEY'}]},artwork:async()=>({covers:['https://cdn2.steamgriddb.com/grid/cover.png','file:///secret','javascript:alert(1)','https://attacker.example/cover.jpg'],wide:[]})};
+ let saves=0;const service=new RemoteLibraryService({dataDir:dir,port:0,getGames:()=>games,saveGame:()=>{saves++;return true},rebuildMeta:()=>{},artworkProvider:provider});
+ t.after(async()=>{await service.stop();fs.rmSync(dir,{recursive:true,force:true})});
+ await service.configure({enabled:true,password:'A sufficiently long password'});const base=service.status().localUrl.slice(0,-1);
+ assert.equal((await fetch(base+'/api/artwork/status')).status,401);
+ const login=await fetch(base+'/api/login',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({password:'A sufficiently long password'})});
+ const {csrf}=await login.json(),cookie=login.headers.get('set-cookie').split(';')[0];
+ const get=async url=>fetch(base+url,{headers:{Cookie:cookie}});
+ const post=async(url,body,headers={})=>fetch(base+url,{method:'POST',headers:{Cookie:cookie,Origin:base,'Content-Type':'application/json','X-Rampage-CSRF':csrf,...headers},body:JSON.stringify(body)});
+ assert.deepEqual(await (await get('/api/artwork/status')).json(),{enabled:true});
+ assert.equal((await post('/api/artwork/search',{title:'Demo'},{'X-Rampage-CSRF':''})).status,403);
+ assert.equal((await post('/api/artwork/search',{title:'Demo'},{Origin:'https://attacker.example'})).status,403);assert.equal(searches,0);
+ const result=await (await post('/api/artwork/search',{title:'Demo'})).json();assert.deepEqual(result,{games:[{id:123,name:'Demo',year:2025}]});assert(!JSON.stringify(result).includes('PRIVATE-KEY'));
+ const covers=await (await post('/api/artwork/covers',{gameId:123})).json();assert.deepEqual(covers,{covers:['https://cdn2.steamgriddb.com/grid/cover.png']});
+ assert.equal((await post('/api/artwork/covers',{gameId:'https://example.com'})).status,400);
+ const saved=await post('/api/game/demo',{updatedAt:0,patch:{coverUrl:covers.covers[0]}});assert.equal(saved.status,200);assert.equal(games.demo.customArt.cover,covers.covers[0]);assert.equal(saves,1);
+ enabled=false;assert.deepEqual(await(await get('/api/artwork/status')).json(),{enabled:false});assert.equal((await post('/api/artwork/search',{title:'Demo'})).status,409);
+ enabled=true;fail=true;const rejected=await post('/api/artwork/search',{title:'Demo'});assert.equal(rejected.status,502);assert(!(await rejected.text()).includes('PRIVATE-KEY'));
+ fail=false;let limited=false;for(let i=0;i<20;i++){if((await post('/api/artwork/search',{title:'Demo'})).status===429)limited=true;}assert(limited);
+});
