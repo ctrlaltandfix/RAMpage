@@ -17,7 +17,7 @@ test('placeholder has no game binaries, download commands or false installed sta
  assert.equal(g.source,'custom');assert.equal(g.installed,false);
  assert.equal(g.hydraDownloadDraft,true);
  assert.equal(g.hydraDownloadStatus,'awaiting-install');
- assert.deepEqual(g.launch,{type:'uri',target:''});
+ assert.deepEqual(g.launch,{type:'exe',target:'',args:'',cwd:''});
  assert.equal(g.exePath,null);assert.equal(g.installDir,null);
  assert.deepEqual(g.art,{});
  assert.equal(JSON.stringify(g).includes('magnet:?'),false);
@@ -49,6 +49,8 @@ test('packaged RAMpage only exposes actions through desktop IPC, and checks opt-
  assert.match(renderer,/data-wiz='hydra-download'|dataset\.wiz='hydra-download'/);
  assert.match(renderer,/Open Hydra available downloads/);
  assert.match(renderer,/g\.hydraDownloadDraft && g\.installed === false/);
+ assert.match(renderer,/Download in Hydra/);
+ assert.match(main,/g\.hydraDownloadStatus='installed'/);
  assert.doesNotMatch(server,/hydra:draft-create|hydra:draft-open|\/api\/hydra\/start-download/);
 });
 test('Hydra metadata disclaimer, existing remote index and ShadPS4 remain intact',()=>{
