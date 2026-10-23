@@ -10,6 +10,8 @@ const companion = {
   async search() {
     return [{ id: "steam:123", title: "Sample Game", optionCount: 2, magnet: "private", token: "secret" }];
   },
+  async options() { return [{id:"option-1",title:"Official demo package",source:"Publisher",sizeBytes:1048576,publishedAt:"2026-10-23",magnet:"never-expose"}]; },
+  async downloaders() { return {downloaders:[{id:"direct",label:"Authorized download",available:true,configured:true,token:"secret"}],availableBytes:2097152,destinationLabel:"PC downloads",path:"private"}; },
   async downloads() {
     return [{ id: "job-123", state: "downloading", progress: 52, path: "C:/secret", uri: "secret" }];
   },
@@ -33,12 +35,14 @@ test("browser receives only redacted game and progress fields", async () => {
   assert.deepEqual(await bridge.search(allowed, { title: "Sample" }),
     [{ id: "steam:123", title: "Sample Game", optionCount: 2 }]);
   assert.deepEqual(await bridge.downloads(allowed),
-    [{ id: "job-123", state: "downloading", progress: 52 }]);
+    [{ id: "job-123", state: "downloading", progress: 52, gameId:null, title:"",
+      downloadedBytes:null,totalBytes:null,speedBytesPerSecond:null,etaSeconds:null }]);
 });
 
 test("mutations need privileges and validated CSRF", async () => {
   const bridge = createHydraBridge(companion);
-  const payload = { action: "queue", gameId: "steam:123", optionId: "option-1" };
+  const payload = { action: "queue", gameId: "steam:123", optionId: "option-1",
+    downloaderId:"direct",extract:false,deleteArchive:false };
   await assert.rejects(bridge.command({ ...allowed, csrfValidated: false }, payload), { code: "FORBIDDEN" });
   await assert.rejects(bridge.command({ ...allowed, canManageDownloads: false }, payload), { code: "FORBIDDEN" });
   assert.deepEqual(await bridge.command(allowed, payload), { accepted: true });
@@ -57,4 +61,16 @@ test("installer request never executes a binary", async () => {
   assert.deepEqual(await bridge.requestInstaller(allowed, { gameId: "steam:123" }),
     { accepted: false, requiresLocalApproval: true,
       message: "Confirm installation on the gaming PC in Hydra Launcher" });
+});
+
+test("game download options, downloader availability and disk info are redacted",async()=>{
+ const bridge=createHydraBridge(companion);
+ assert.deepEqual(await bridge.options(allowed,{gameId:"steam:123"}),[
+   {id:"option-1",title:"Official demo package",source:"Publisher",sizeBytes:1048576,publishedAt:"2026-10-23"}]);
+ assert.deepEqual(await bridge.downloaders(allowed,{gameId:"steam:123",optionId:"option-1"}),{
+   downloaders:[{id:"direct",label:"Authorized download",available:true,configured:true}],
+   availableBytes:2097152,destinationLabel:"PC downloads",requiresLocalDestinationApproval:true});
+ await assert.rejects(bridge.command(allowed,{action:"queue",gameId:"steam:123",optionId:"option-1",
+   downloaderId:"direct",extract:false,deleteArchive:true}),{code:"INVALID_INPUT"});
+ await assert.rejects(bridge.options(allowed,{gameId:"../path"}),{code:"INVALID_INPUT"});
 });
