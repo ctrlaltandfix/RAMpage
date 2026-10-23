@@ -1,0 +1,36 @@
+name: Hydra bridge security tests
+on:
+  push:
+    branches:
+      - chatgpt-hydra-bridge-v1.6.8
+    paths:
+      - 'integrations/hydra/**'
+      - '.github/workflows/hydra-bridge-tests.yml'
+  pull_request:
+    paths:
+      - 'integrations/hydra/**'
+      - '.github/workflows/hydra-bridge-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bridge-tests:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax validation
+        shell: pwsh
+        run: |
+          node --check integrations/hydra/bridge.js
+          node --check integrations/hydra/routes.js
+          node --check integrations/hydra/web-client.js
+          node --check integrations/hydra/bridge.test.js
+          node --check integrations/hydra/routes.test.js
+      - name: Run Hydra bridge tests
+        run: node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js
