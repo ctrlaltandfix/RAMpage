@@ -22,7 +22,7 @@ test('companion pairing and allowlisted operations use loopback auth only',async
      req.url==='/v1/games/options'?{options:[{id:'opt:1',title:'Demo package'}]}:
      req.url==='/v1/downloaders'?{downloaders:[{id:'direct',label:'Direct',available:true,configured:true}],availableBytes:999}:
      req.url==='/v1/downloads'?{downloads:[{id:'job:1',state:'paused',progress:35}]}:
-     {accepted:true};
+     {accepted:true,localApproved:true};
    res.setHeader('Content-Type','application/json');
    res.end(JSON.stringify(response));
  });
