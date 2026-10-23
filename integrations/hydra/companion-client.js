@@ -55,15 +55,25 @@ function createHydraCompanionClient({baseUrl,token,fetchImpl=globalThis.fetch,ti
      if(!Array.isArray(result.games))throw new BridgeError('BAD_RESPONSE','Invalid companion game list');
      return result.games;
    },
+   async options({gameId}){
+     const result=await request('/v1/games/options',{gameId});
+     if(!Array.isArray(result.options))throw new BridgeError('BAD_RESPONSE','Invalid game download options');
+     return result.options;
+   },
+   async downloaders({gameId,optionId}){
+     const result=await request('/v1/downloaders',{gameId,optionId});
+     if(!Array.isArray(result.downloaders))throw new BridgeError('BAD_RESPONSE','Invalid downloader options');
+     return result;
+   },
    async downloads(){
      const result=await request('/v1/downloads');
      if(!Array.isArray(result.downloads))throw new BridgeError('BAD_RESPONSE','Invalid companion queue');
      return result.downloads;
    },
-   async command({action,gameId,downloadId,optionId}){
+   async command({action,gameId,downloadId,optionId,downloaderId,extract,deleteArchive}){
      if(!ACTIONS.has(action))throw new BridgeError('INVALID_INPUT','Unrecognised companion action');
      const result=await request('/v1/downloads/command',
-       action==='queue'?{action,gameId,optionId}:{action,gameId,downloadId});
+       action==='queue'?{action,gameId,optionId,downloaderId,extract,deleteArchive}:{action,gameId,downloadId});
      return {accepted:result.accepted===true};
    },
  });
