@@ -1,11 +1,5 @@
 name: Inspect authentic RAMpage v1.6.7 integration anchors
-on:
-  push:
-    branches: [chatgpt-hydra-bridge-v1.6.8]
-    paths: ['.github/workflows/inspect-hydra-layout.yml']
-  pull_request:
-    paths: ['.github/workflows/inspect-hydra-layout.yml']
-  workflow_dispatch:
+on: workflow_dispatch
 permissions:
   contents: read
 jobs:
