@@ -35,7 +35,7 @@ test('companion pairing and allowlisted operations use loopback auth only',async
  assert.equal((await client.options({gameId:'game:1'}))[0].id,'opt:1');
  assert.equal((await client.downloaders({gameId:'game:1',optionId:'opt:1'})).availableBytes,999);
  assert.equal((await client.downloads())[0].progress,35);
- assert.deepEqual(await client.command({action:'pause',gameId:'game:1',downloadId:'job:1'}),{accepted:true});
+ assert.deepEqual(await client.command({action:'pause',gameId:'game:1',downloadId:'job:1'}),{accepted:true,localApproved:false});
  assert.equal(operations[5][1],'/v1/downloads/command');
  await assert.rejects(client.command({action:'runExe',gameId:'game:1'}),{code:'INVALID_INPUT'});
 });
