@@ -74,3 +74,12 @@ test("game download options, downloader availability and disk info are redacted"
    downloaderId:"direct",extract:false,deleteArchive:true}),{code:"INVALID_INPUT"});
  await assert.rejects(bridge.options(allowed,{gameId:"../path"}),{code:"INVALID_INPUT"});
 });
+
+test("a queue command is rejected without independent PC-side job approval",async()=>{
+ const adapter={...companion,async command(){return {accepted:true,localApproved:false};}};
+ const bridge=createHydraBridge(adapter);
+ await assert.rejects(bridge.command(allowed,{
+  action:"queue",gameId:"steam:123",optionId:"option-1",
+  downloaderId:"direct",extract:false,deleteArchive:false
+ }),{code:"REJECTED"});
+});
