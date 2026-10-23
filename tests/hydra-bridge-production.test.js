@@ -19,6 +19,12 @@ test('actual packaged RAMpage source includes companion boundary and existing Hy
  assert.match(server,/pathname\.startsWith\('\/api\/hydra\/bridge\/'\)/);
  assert.match(read('main.js'),/ipcMain\.handle\('hydra:draft-create'/);
  assert.match(read('main.js'),/ShadPS4 foreground release result/);
+ assert.match(read('main.js'),/hydra:bridge-options/);
+ assert.match(read('main.js'),/hydra:bridge-command/);
+ assert.match(read('preload.js'),/hydraBridgeOptions/);
+ assert.match(read('renderer/app.js'),/openHydraManagerForGame/);
+ assert.match(read('renderer/app.js'),/Manage Hydra downloads/);
+ assert.match(read('renderer/app.js'),/mountHydraDownloadPanel/);
 });
 
 test('existing login gates bridge, disabled Hydra refuses access, unsupported downloader fails closed',async t=>{
