@@ -10,6 +10,8 @@ const bridge = createHydraBridge({
   supported: true,
   async ping() { return true; },
   async search({ title }) { return [{ id: "game:1", title, optionCount: 1, secret: "no" }]; },
+  async options(){return [{id:"opt:1",title:"Demo",source:"Publisher",sizeBytes:1024,uri:"secret"}];},
+  async downloaders(){return {downloaders:[{id:"direct",label:"Direct",available:true,configured:true}],availableBytes:3000,destinationLabel:"PC downloads"};},
   async downloads() { return [{ id: "download:1", state: "paused", progress: 40, path: "no" }]; },
   async command() { return { accepted: true }; },
 });
@@ -54,7 +56,8 @@ test("search and downloads are redacted", async () => {
   assert.equal(searched.status, 200);
   assert.deepEqual(searched.body.data, [{ id: "game:1", title: "Example", optionCount: 1 }]);
   const downloads = await invoke("GET", "/api/hydra/bridge/downloads");
-  assert.deepEqual(downloads.body.data, [{ id: "download:1", state: "paused", progress: 40 }]);
+  assert.deepEqual(downloads.body.data, [{ id: "download:1", state: "paused", progress: 40, gameId:null, title:"",
+   downloadedBytes:null,totalBytes:null,speedBytesPerSecond:null,etaSeconds:null }]);
 });
 
 test("download mutation requires server-issued management privilege", async () => {
@@ -81,8 +84,20 @@ test("web client sends same-origin credentials and CSRF", async () => {
       return { ok: true, async json() { return { data: { accepted: true } }; } };
     },
   });
-  await client.queue("game:1", "option:1");
+  await client.queue("game:1", "option:1","direct",false,false);
   assert.equal(calls[0].options.credentials, "same-origin");
   assert.equal(calls[0].options.headers["X-Rampage-CSRF"], "csrf");
   assert.equal(calls[0].url, "/api/hydra/bridge/command");
+});
+
+test("authenticated game options endpoint redacts URIs and routes typed game IDs",async()=>{
+ const options=await invoke("GET","/api/hydra/bridge/options?gameId=game%3A1");
+ assert.equal(options.status,200);
+ assert.deepEqual(options.body.data,[{id:"opt:1",title:"Demo",source:"Publisher",sizeBytes:1024,publishedAt:null}]);
+ const downloaders=await invoke("GET","/api/hydra/bridge/downloaders?gameId=game%3A1&optionId=opt%3A1");
+ assert.equal(downloaders.status,200);
+ assert.equal(downloaders.body.data.availableBytes,3000);
+ assert.equal(downloaders.body.data.requiresLocalDestinationApproval,true);
+ const bad=await invoke("GET","/api/hydra/bridge/options?gameId=..%2Fprivate");
+ assert.equal(bad.status,400);
 });
