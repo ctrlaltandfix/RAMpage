@@ -110,4 +110,5 @@ function mountHydraDownloadPanel(root, { client, gameId, gameTitle, pollMs = 300
   };
 }
 
-module.exports = { mountHydraDownloadPanel };
+if (typeof module !== "undefined" && module.exports) module.exports = { mountHydraDownloadPanel };
+if (typeof window !== "undefined") window.RAMpageHydraDownloadPanel = mountHydraDownloadPanel;
