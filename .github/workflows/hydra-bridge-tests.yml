@@ -27,8 +27,8 @@ jobs:
           node --check integrations/hydra/web-panel.js
           node --check integrations/hydra/companion-client.js
           node --check integrations/hydra/companion-client.test.js
-          node --check integrations/hydra/web-panel.test.js integrations/hydra/companion-client.test.js
+          node --check integrations/hydra/web-panel.test.js
           node --check integrations/hydra/bridge.test.js
           node --check integrations/hydra/routes.test.js
       - name: Run Hydra bridge tests
-        run: node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js integrations/hydra/web-panel.test.js
+        run: node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js integrations/hydra/web-panel.test.js integrations/hydra/companion-client.test.js
