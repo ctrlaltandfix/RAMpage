@@ -21,16 +21,26 @@ if(read('remote-library.js').includes('/api/hydra/bridge/'))
 const integrations=path.join(__dirname,'..','integrations','hydra');
 const target=path.join(root,'src','hydra-bridge');
 fs.mkdirSync(target,{recursive:true});
-for(const f of ['bridge.js','routes.js'])fs.copyFileSync(path.join(integrations,f),path.join(target,f));
+for(const f of ['bridge.js','routes.js','companion-client.js'])fs.copyFileSync(path.join(integrations,f),path.join(target,f));
 const serverInit=[
  "    // Bridge is unavailable until an independently supported Hydra-side component",
  "    // is explicitly paired on the gaming PC. No external private IPC is invoked.",
+ "    // Developer-only local companion pairing. Disabled in normal RAMpage launches.",
+ "    // Stock Hydra Launcher does not implement this protocol.",
+ "    this.hydraCompanion=null;",
+ "    const port=Number(process.env.RAMPAGE_HYDRA_COMPANION_DEV_PORT);",
+ "    if(process.env.RAMPAGE_HYDRA_COMPANION_DEV_ENABLED==='1' &&",
+ "       Number.isSafeInteger(port) && port>0 && port<65536){",
+ "      try{this.hydraCompanion=createHydraCompanionClient({",
+ "        baseUrl:'http://127.0.0.1:'+port,token:process.env.RAMPAGE_HYDRA_COMPANION_DEV_TOKEN",
+ "      });}catch{/* Stay disconnected; do not log local pairing tokens. */}",
+ "    }",
  "    this.hydraBridgeRoute = createHydraRoutes({",
- "      bridge:createHydraBridge(null),",
+ "      bridge:createHydraBridge(this.hydraCompanion),"
  "      resolveSession:req=>{",
  "        const s=this.session(req);",
  "        return s?{authenticated:true,hydraEnabled:this.hydraDraftEnabled()===true,",
- "          canManageDownloads:false,csrf:s.csrf}:null;",
+ "          canManageDownloads:this.hydraCompanion!==null,csrf:s.csrf}:null;",
  "      },",
  "      verifyOrigin:req=>{try{this.checkOrigin(req);return true;}catch{return false;}},",
  "      verifyCsrf:(req,session)=>req.headers['x-rampage-csrf']===session.csrf,",
@@ -54,7 +64,8 @@ change('remote-library.js',
 fs.appendFileSync(p('remote-library.js'),
  "\n// Load guarded companion boundary only after the production module has initialised.\n"+
  "const {createHydraBridge}=require('./hydra-bridge/bridge');\n"+
- "const {createHydraRoutes}=require('./hydra-bridge/routes');\n");
+ "const {createHydraRoutes}=require('./hydra-bridge/routes');\n"+
+ "const {createHydraCompanionClient}=require('./hydra-bridge/companion-client');\n");
 change('remote/index.html',
  '<div id="hydra-game-results" role="status" aria-live="polite" class="hydra-tools-results"></div>',
  '<div id="hydra-game-results" role="status" aria-live="polite" class="hydra-tools-results"></div>'+
@@ -111,4 +122,4 @@ fs.appendFileSync(p('remote/style.css'),'\n'+css+'\n');
 for(const name of ['remote-library.js','remote/client.js','hydra-bridge/bridge.js','hydra-bridge/routes.js']){
  cp.execFileSync(process.execPath,['--check',p(name)],{stdio:'inherit'});
 }
-console.log('PASS: production RAMpage v1.6.7 Hydra web editor patched with guarded v1.6.8 companion boundary. No downloader execution is enabled.');
+console.log('PASS: Official RAMpage v1.6.7 patched with Hydra workflow. Stock Hydra has no external control API. Development companion requires explicit local opt-in.');
