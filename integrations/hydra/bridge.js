@@ -36,9 +36,12 @@ function trustedContext(context, mutate = false) {
   }
 }
 
-function requireAdapter(adapter, operation) {
+async function requireAdapter(adapter, operation) {
   if (!adapter || adapter.supported !== true || typeof adapter[operation] !== "function") {
     throw new BridgeError("UNAVAILABLE", "A supported Hydra-side companion is not connected");
+  }
+  if (typeof adapter.ping !== "function" || await adapter.ping() !== true) {
+    throw new BridgeError("UNAVAILABLE", "The Hydra companion has not completed local pairing and approval");
   }
 }
 
@@ -58,13 +61,14 @@ function createHydraBridge(adapter) {
   return Object.freeze({
     async status(context) {
       trustedContext(context);
-      return { connected: adapter?.supported === true, capabilities: adapter?.supported === true
+      const connected = adapter?.supported === true && typeof adapter.ping === "function" && await adapter.ping() === true;
+      return { connected, capabilities: connected
         ? ["search", "queue", "pause", "resume", "cancel", "readStatus"] : [] };
     },
 
     async search(context, { title } = {}) {
       trustedContext(context);
-      requireAdapter(adapter, "search");
+      await requireAdapter(adapter, "search");
       if (typeof title !== "string" || title.trim().length < 2 || title.length > 160) {
         throw new BridgeError("INVALID_INPUT", "Search title must contain 2–160 characters");
       }
@@ -81,7 +85,7 @@ function createHydraBridge(adapter) {
 
     async downloads(context) {
       trustedContext(context);
-      requireAdapter(adapter, "downloads");
+      await requireAdapter(adapter, "downloads");
       const rows = await adapter.downloads();
       if (!Array.isArray(rows)) throw new BridgeError("BAD_RESPONSE", "Invalid downloads response");
       return rows.slice(0, MAX_RESULTS).map(projectDownload);
@@ -89,7 +93,7 @@ function createHydraBridge(adapter) {
 
     async command(context, input = {}) {
       trustedContext(context, true);
-      requireAdapter(adapter, "command");
+      await requireAdapter(adapter, "command");
       if (!input || typeof input !== "object" || Array.isArray(input)) {
         throw new BridgeError("INVALID_INPUT", "Invalid download command");
       }
