@@ -1,0 +1,39 @@
+name: Inspect authentic RAMpage v1.6.7 integration anchors
+on:
+  push:
+    branches: [chatgpt-hydra-bridge-v1.6.8]
+    paths: ['.github/workflows/inspect-hydra-layout.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect checksum-pinned official version
+        run: |
+          $ErrorActionPreference='Stop'
+          mkdir "$env:RUNNER_TEMP\official" -Force | Out-Null
+          gh release download v1.6.7 --pattern "RAMpage-Setup-1.6.7.exe" --dir "$env:RUNNER_TEMP\official"
+          if($LASTEXITCODE -ne 0){throw 'Official v1.6.7 installer unavailable'}
+          $installer="$env:RUNNER_TEMP\official\RAMpage-Setup-1.6.7.exe"
+          $hash=(Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+          if($hash -ne 'cadba821eb92d3710e83ef210e70804f024f7fb103b08975cd8e57aa582cfe96'){throw "Wrong source installer checksum: $hash"}
+          & 7z x '-y' "-o$env:RUNNER_TEMP\expanded" $installer | Out-Null
+          if($LASTEXITCODE -ne 0){throw 'Unpack failed'}
+          $candidates=@(Get-ChildItem "$env:RUNNER_TEMP\expanded" -Recurse -File -Filter RAMpage.exe | Where-Object {Test-Path (Join-Path $_.DirectoryName 'resources\app.asar')})
+          if($candidates.Count -ne 1){throw 'Cannot identify packaged application'}
+          & npx --yes '@electron/asar@3.4.1' extract (Join-Path $candidates[0].DirectoryName 'resources\app.asar') "$env:RUNNER_TEMP\source"
+          if($LASTEXITCODE -ne 0){throw 'ASAR extraction failed'}
+          node scripts/inspect-hydra-layout.js "$env:RUNNER_TEMP\source"
