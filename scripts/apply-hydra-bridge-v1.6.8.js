@@ -119,6 +119,7 @@ const css=[
  "@media(max-width:600px){.hydra-download-panel .hydra-filter-row{flex-direction:column}.hydra-download-panel .hydra-filter-row>*{width:100%}}"
 ].join('\n');
 fs.appendFileSync(p('remote/style.css'),'\n'+css+'\n');
+require('./apply-hydra-desktop-panel').patchDesktop(root);
 for(const name of ['remote-library.js','remote/client.js','hydra-bridge/bridge.js','hydra-bridge/routes.js']){
  cp.execFileSync(process.execPath,['--check',p(name)],{stdio:'inherit'});
 }
