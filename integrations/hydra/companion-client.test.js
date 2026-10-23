@@ -19,6 +19,8 @@ test('companion pairing and allowlisted operations use loopback auth only',async
    operations.push([req.method,req.url,body]);
    const response=req.url==='/v1/status'?{protocol:'rampage-hydra-v1',ready:true,userApproved:true}:
      req.url==='/v1/games/search'?{games:[{id:'game:1',title:'Test Game',optionCount:1}]}:
+     req.url==='/v1/games/options'?{options:[{id:'opt:1',title:'Demo package'}]}:
+     req.url==='/v1/downloaders'?{downloaders:[{id:'direct',label:'Direct',available:true,configured:true}],availableBytes:999}:
      req.url==='/v1/downloads'?{downloads:[{id:'job:1',state:'paused',progress:35}]}:
      {accepted:true};
    res.setHeader('Content-Type','application/json');
@@ -30,9 +32,11 @@ test('companion pairing and allowlisted operations use loopback auth only',async
  const client=createHydraCompanionClient({baseUrl:'http://127.0.0.1:'+port,token:'a'.repeat(48)});
  assert.equal(await client.ping(),true);
  assert.equal((await client.search({title:'Test'}))[0].title,'Test Game');
+ assert.equal((await client.options({gameId:'game:1'}))[0].id,'opt:1');
+ assert.equal((await client.downloaders({gameId:'game:1',optionId:'opt:1'})).availableBytes,999);
  assert.equal((await client.downloads())[0].progress,35);
  assert.deepEqual(await client.command({action:'pause',gameId:'game:1',downloadId:'job:1'}),{accepted:true});
- assert.equal(operations[3][1],'/v1/downloads/command');
+ assert.equal(operations[5][1],'/v1/downloads/command');
  await assert.rejects(client.command({action:'runExe',gameId:'game:1'}),{code:'INVALID_INPUT'});
 });
 
