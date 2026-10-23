@@ -28,6 +28,7 @@ jobs:
         with:
           node-version: '22'
 
+      # Both RAMpage game views offer the same Hydra download handoff.
       - name: Validate Hydra opt-in Download a Game implementation syntax
         run: |
           $ErrorActionPreference='Stop'
