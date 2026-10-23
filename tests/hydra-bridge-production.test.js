@@ -33,7 +33,7 @@ test('existing login gates bridge, disabled Hydra refuses access, unsupported do
  await svc.configure({enabled:true,password:'A sufficiently long test password'});
  const base=svc.status().localUrl.slice(0,-1);
  const anon=await fetch(base+'/api/hydra/bridge/status');
- assert.equal(anon.status,403);
+ assert.equal(anon.status,401);
  const login=await fetch(base+'/api/login',{
   method:'POST',headers:{Origin:base,'Content-Type':'application/json'},
   body:JSON.stringify({password:'A sufficiently long test password'})
