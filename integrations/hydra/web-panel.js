@@ -49,6 +49,21 @@ function mountHydraDownloadPanel(root,{client,gameId,gameTitle,pollMs=10000}={})
   const time=n=>typeof n==="number"&&Number.isFinite(n)
     ?(n<60?Math.ceil(n)+"s":n<3600?Math.ceil(n/60)+"m":Math.ceil(n/3600)+"h"):"—";
   const compare=(a,b)=>String(a||"").localeCompare(String(b||""));
+  function renderOptionList(list){
+    clear(list);
+    const matches=choices.filter(row=>
+      (sourceFilter==="all"||(row.source||"Other")===sourceFilter)&&
+      (row.title||"").toLowerCase().includes(filterText.toLowerCase()));
+    if(!matches.length)elem("p","No matching options.",list);
+    for(const row of matches){
+      const item=elem("div",undefined,list,"hydra-option");
+      elem("div",row.title,item,"hydra-option-title");
+      elem("small",[bytes(row.sizeBytes),row.source,row.publishedAt].filter(Boolean).join(" · "),item);
+      button("Select download",item,async()=>{
+        selected=row;chosenDownloader=null;await chooseDownloader();
+      });
+    }
+  }
   function drawOptions(){
     clear(catalogue);
     elem("h4","Download options",catalogue);
@@ -59,28 +74,16 @@ function mountHydraDownloadPanel(root,{client,gameId,gameTitle,pollMs=10000}={})
     const query=elem("input",undefined,filters);query.type="search";
     query.placeholder="Filter downloads";query.setAttribute("aria-label","Filter download versions");
     query.value=filterText;
-    query.addEventListener("input",()=>{filterText=query.value;drawOptions();});
-    const sources=[...new Set(choices.map(x=>x.source||"Other"))].sort(compare);
-    const select=elem("select",undefined,filters);
-    select.setAttribute("aria-label","Filter by download source");
-    let opt=elem("option","All sources",select);opt.value="all";
-    for(const name of sources){opt=elem("option",name,select);opt.value=name;}
-    select.value=sourceFilter;
-    select.addEventListener("change",()=>{sourceFilter=select.value;drawOptions();});
+    const sources=[...new Set(choices.map(row=>row.source||"Other"))].sort(compare);
+    const dropdown=elem("select",undefined,filters);
+    dropdown.setAttribute("aria-label","Filter by download source");
+    let opt=elem("option","All sources",dropdown);opt.value="all";
+    for(const source of sources){opt=elem("option",source,dropdown);opt.value=source;}
+    dropdown.value=sourceFilter;
     const list=elem("div",undefined,catalogue,"hydra-option-list");
-    const filtered=choices.filter(x=>
-      (sourceFilter==="all"||(x.source||"Other")===sourceFilter)&&
-      (x.title||"").toLowerCase().includes(filterText.toLowerCase()));
-    if(!filtered.length)elem("p","No matching options.",list);
-    for(const row of filtered){
-      const item=elem("div",undefined,list,"hydra-option");
-      elem("div",row.title,item,"hydra-option-title");
-      elem("small",[bytes(row.sizeBytes),row.source,row.publishedAt].filter(Boolean).join(" · "),item);
-      button("Select download",item,async()=>{
-        selected=row;chosenDownloader=null;
-        await chooseDownloader();
-      });
-    }
+    query.addEventListener("input",()=>{filterText=query.value;renderOptionList(list);});
+    dropdown.addEventListener("change",()=>{sourceFilter=dropdown.value;renderOptionList(list);});
+    renderOptionList(list);
   }
   async function search(){
     setStatus("Searching Hydra’s connected game catalogue…");
