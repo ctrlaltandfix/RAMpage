@@ -36,7 +36,7 @@ jobs:
             node --check $file
             if($LASTEXITCODE -ne 0){throw "Syntax error: $file"}
           }
-          node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js integrations/hydra/web-panel.test.js integrations/hydra/companion-client.test.js
+          node --test integrations/hydra/bridge.test.js integrations/hydra/routes.test.js integrations/hydra/web-panel.test.js integrations/hydra/web-panel-workflow.test.js integrations/hydra/companion-client.test.js
           if($LASTEXITCODE -ne 0){throw 'Bridge unit tests failed'}
       - name: Recover and verify official RAMpage 1.6.7
         run: |
