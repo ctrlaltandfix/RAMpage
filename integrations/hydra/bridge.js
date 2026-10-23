@@ -11,6 +11,26 @@ const ACTIONS = new Set(["queue", "pause", "resume", "cancel"]);
 const ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9:_-]{0,127}$/;
 const STATES = new Set(["queued", "downloading", "paused", "completed", "failed", "cancelled"]);
 const MAX_RESULTS = 50;
+const MAX_BYTES = 10995116277760;
+const safeLabel = (text, limit=160) => typeof text === "string" ?
+  text.replace(/[\u0000-\u001f\u007f]/g,"").slice(0,limit) : "";
+const safeNumber = (value, max=MAX_BYTES) => Number.isFinite(value) && value>=0 ?
+  Math.min(max,value) : null;
+function projectOption(row) {
+  if(!row || typeof row!=="object")throw new BridgeError("BAD_RESPONSE","Invalid option");
+  return {
+    id:safeId(row.id,"option id"), title:safeLabel(row.title),
+    source:safeLabel(row.source,60), sizeBytes:safeNumber(row.sizeBytes),
+    publishedAt:typeof row.publishedAt==="string" && /^\d{4}-\d{2}-\d{2}$/.test(row.publishedAt)?
+      row.publishedAt:null,
+  };
+}
+function projectDownloader(row) {
+  if(!row || typeof row!=="object")throw new BridgeError("BAD_RESPONSE","Invalid downloader");
+  return {id:safeId(row.id,"downloader id"),label:safeLabel(row.label,60),
+    available:row.available===true, configured:row.configured===true};
+}
+
 
 class BridgeError extends Error {
   constructor(code, message) {
@@ -54,7 +74,14 @@ function projectDownload(row) {
   const progress = Number.isFinite(row.progress)
     ? Math.max(0, Math.min(100, row.progress))
     : null;
-  return { id, state, progress };
+  return { id, state, progress,
+    gameId: typeof row.gameId === "string" && ID_RE.test(row.gameId) ? row.gameId:null,
+    title:safeLabel(row.title),
+    downloadedBytes:safeNumber(row.downloadedBytes),
+    totalBytes:safeNumber(row.totalBytes),
+    speedBytesPerSecond:safeNumber(row.speedBytesPerSecond,1073741824),
+    etaSeconds:safeNumber(row.etaSeconds,31536000),
+  };
 }
 
 function createHydraBridge(adapter) {
@@ -63,7 +90,7 @@ function createHydraBridge(adapter) {
       trustedContext(context);
       const connected = adapter?.supported === true && typeof adapter.ping === "function" && await adapter.ping() === true;
       return { connected, capabilities: connected
-        ? ["search", "queue", "pause", "resume", "cancel", "readStatus"] : [] };
+        ? ["search", "options", "downloaders", "queue", "pause", "resume", "cancel", "readStatus"] : [] };
     },
 
     async search(context, { title } = {}) {
@@ -83,6 +110,28 @@ function createHydraBridge(adapter) {
       }));
     },
 
+    async options(context, { gameId } = {}) {
+      trustedContext(context);
+      safeId(gameId, "game id");
+      await requireAdapter(adapter,"options");
+      const rows=await adapter.options({gameId});
+      if(!Array.isArray(rows))throw new BridgeError("BAD_RESPONSE","Invalid source option list");
+      return rows.slice(0,MAX_RESULTS).map(projectOption);
+    },
+
+    async downloaders(context, { gameId, optionId } = {}) {
+      trustedContext(context);
+      safeId(gameId,"game id");safeId(optionId,"option id");
+      await requireAdapter(adapter,"downloaders");
+      const result=await adapter.downloaders({gameId,optionId});
+      if(!result || !Array.isArray(result.downloaders))
+        throw new BridgeError("BAD_RESPONSE","Invalid downloader list");
+      return {downloaders:result.downloaders.slice(0,20).map(projectDownloader),
+        availableBytes:safeNumber(result.availableBytes),
+        destinationLabel:safeLabel(result.destinationLabel,80),
+        requiresLocalDestinationApproval:true};
+    },
+
     async downloads(context) {
       trustedContext(context);
       await requireAdapter(adapter, "downloads");
@@ -97,16 +146,22 @@ function createHydraBridge(adapter) {
       if (!input || typeof input !== "object" || Array.isArray(input)) {
         throw new BridgeError("INVALID_INPUT", "Invalid download command");
       }
-      const { action, gameId, downloadId, optionId } = input;
+      const { action, gameId, downloadId, optionId, downloaderId, extract, deleteArchive } = input;
       if (!ACTIONS.has(action)) throw new BridgeError("INVALID_INPUT", "Unknown action");
       const safeGameId = safeId(gameId, "game id");
       const safeDownloadId = action === "queue" ? undefined : safeId(downloadId, "download id");
       const safeOptionId = action === "queue" ? safeId(optionId, "option id") : undefined;
+      const safeDownloaderId = action === "queue" ? safeId(downloaderId,"downloader id") : undefined;
+      if(action==="queue" && (typeof extract!=="boolean" || typeof deleteArchive!=="boolean"))
+        throw new BridgeError("INVALID_INPUT","Download preferences must be booleans");
+      if(action==="queue" && deleteArchive && !extract)
+        throw new BridgeError("INVALID_INPUT","Archive deletion requires extraction");
 
       // Explicit local destination/source selection must be handled INSIDE the
       // trusted Hydra companion; never accept a path, URI or executable via HTTP.
       const payload = action === "queue"
-        ? { action, gameId: safeGameId, optionId: safeOptionId }
+        ? { action, gameId: safeGameId, optionId: safeOptionId,
+          downloaderId:safeDownloaderId,extract,deleteArchive }
         : { action, gameId: safeGameId, downloadId: safeDownloadId };
       const result = await adapter.command(payload);
       if (!result || result.accepted !== true) {
