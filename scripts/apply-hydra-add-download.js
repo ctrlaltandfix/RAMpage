@@ -151,6 +151,36 @@ patch('renderer/app.js',"        case 'editmeta': return g && openMetaEdit(g);",
  "        case 'editmeta': return g && openMetaEdit(g);\n"+
  "        case 'hydra-download': return g && api.openHydraDraft(g.id).then(r=>toast(r.message||'Hydra opened')).catch(err=>toast(err.message||'Could not open Hydra',true));",
  'detail view click action');
+// A downloaded entry becomes playable only when the user explicitly links a real game executable.
+patch('main.js',
+ "  for (const k of allowed) if (k in patch) g[k] = patch[k];",
+ lines([
+ "  for (const k of allowed) if (k in patch) g[k] = patch[k];",
+ "  if(g.hydraDownloadDraft && typeof patch.exePath==='string' &&",
+ "     /\\.(exe|lnk)$/i.test(patch.exePath) && fs.existsSync(patch.exePath) &&",
+ "     fs.statSync(patch.exePath).isFile()){",
+ "    g.installed=true;g.hydraDownloadStatus='installed';",
+ "  }"
+ ]),'user links downloaded executable in Properties');
+patch('renderer/app.js',
+ "  // Already playing: don't start a second copy — put the one that's running back in",
+ lines([
+ "  if(g.hydraDownloadDraft && g.installed===false){",
+ "    try{const r=await api.openHydraDraft(id);toast(r.message||'Hydra opened');}",
+ "    catch(e){toast(e.message||'Could not open Hydra',true);}",
+ "    return;",
+ "  }",
+ "  // Already playing: don't start a second copy — put the one that's running back in"
+ ]),'uninstalled placeholder Play action opens Hydra instead of trying missing .exe');
+patch('renderer/app.js',
+ "function playBtn(g) {\n",
+ lines([
+ "function playBtn(g) {",
+ "  if(g.hydraDownloadDraft && g.installed===false){",
+ "    return '<button class=\"play-btn\" data-play=\"'+esc(g.id)+'\"><svg><use href=\"#i-plus\"/></svg>Download in Hydra</button>';",
+ "  }",
+ ""
+ ]),'download action instead of Play on uninstalled entry');
 for(const p of ['main.js','preload.js','renderer/app.js','hydra-download-draft.js'])
  cp.execFileSync(process.execPath,['--check',file(p)],{stdio:'inherit'});
 console.log('PASS: Hydra option gated by desktop Settings, uninstalled placeholder saved and Hydra handoff added');
