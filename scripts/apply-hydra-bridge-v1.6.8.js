@@ -92,7 +92,20 @@ const css=[
  ".hydra-download-panel .hydra-actions button,.hydra-transfer button{font-size:12px;padding:7px 10px;margin:5px}",
  ".hydra-transfer,.hydra-result{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:7px 0}",
  ".hydra-transfer progress{width:120px;max-width:100%}",
- ".hydra-download-panel .hydra-status{font-size:12px;color:var(--muted)}"
+ ".hydra-download-panel .hydra-status{font-size:12px;color:var(--muted)}",
+ ".hydra-download-panel .hydra-filter-row{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}",
+ ".hydra-download-panel .hydra-filter-row input{min-width:160px;flex:1}",
+ ".hydra-download-panel .hydra-filter-row select{min-width:135px;flex:0 1 auto}",
+ ".hydra-download-panel .hydra-option{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:8px 0;display:flex;flex-direction:column;align-items:flex-start;gap:6px}",
+ ".hydra-download-panel .hydra-option-title{font-weight:650;color:var(--text);overflow-wrap:anywhere}",
+ ".hydra-download-panel .hydra-option small{color:var(--muted);font-size:12px}",
+ ".hydra-download-panel .hydra-settings{padding:12px 0}",
+ ".hydra-download-panel .hydra-settings select{width:100%;margin:8px 0}",
+ ".hydra-download-panel .hydra-check{display:flex;align-items:center;gap:9px;margin:12px 0;font-size:12px}",
+ ".hydra-download-panel .hydra-check input{width:auto;flex:0 0 auto}",
+ ".hydra-download-panel .hydra-transfer{display:block;background:var(--card);border-radius:10px;border:1px solid var(--line);padding:12px;margin:10px 0}",
+ ".hydra-download-panel .hydra-transfer progress{display:block;width:100%;height:8px;margin:10px 0}",
+ "@media(max-width:600px){.hydra-download-panel .hydra-filter-row{flex-direction:column}.hydra-download-panel .hydra-filter-row>*{width:100%}}"
 ].join('\n');
 fs.appendFileSync(p('remote/style.css'),'\n'+css+'\n');
 for(const name of ['remote-library.js','remote/client.js','hydra-bridge/bridge.js','hydra-bridge/routes.js']){
