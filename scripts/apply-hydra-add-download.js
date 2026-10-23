@@ -6,8 +6,9 @@ const file=n=>path.join(root,'src',n);
 function patch(name,anchor,next,label){
  const fn=file(name),s=fs.readFileSync(fn,'utf8').replace(/\r\n/g,'\n');
  const count=s.split(anchor).length-1;
- if(count!==1)throw Error('Incompatible baseline '+label+': '+count+' anchors');
- fs.writeFileSync(fn,s.replace(anchor,next));
+ const expected=label==='persistent Hydra access from detail view'?2:1;
+ if(count!==expected)throw Error('Incompatible baseline '+label+': '+count+' anchors; expected '+expected);
+ fs.writeFileSync(fn,expected===2?s.replaceAll(anchor,next):s.replace(anchor,next));
 }
 const lines=a=>a.join('\n');
 fs.copyFileSync(path.join(__dirname,'..','src','hydra-download-draft.js'),file('hydra-download-draft.js'));
