@@ -11,7 +11,7 @@ function createHydraWebClient({ csrfToken, fetchImpl = globalThis.fetch } = {}) 
       method: isPost ? "POST" : "GET",
       credentials: "same-origin",
       cache: "no-store",
-      headers: isPost ? { "Content-Type": "application/json", "X-CSRF-Token": csrfToken || "" } : {},
+      headers: isPost ? { "Content-Type": "application/json", "X-Rampage-CSRF": csrfToken || "" } : {},
       ...(isPost ? { body: JSON.stringify(payload) } : {}),
     });
     const result = await response.json();
@@ -34,4 +34,5 @@ function createHydraWebClient({ csrfToken, fetchImpl = globalThis.fetch } = {}) 
   });
 }
 
-module.exports = { createHydraWebClient };
+if (typeof module !== "undefined" && module.exports) module.exports = { createHydraWebClient };
+if (typeof window !== "undefined") window.RAMpageHydraWebClient = createHydraWebClient;
