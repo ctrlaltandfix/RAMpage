@@ -128,7 +128,7 @@ function createHydraBridge(adapter) {
         throw new BridgeError("BAD_RESPONSE","Invalid downloader list");
       return {downloaders:result.downloaders.slice(0,20).map(projectDownloader),
         availableBytes:safeNumber(result.availableBytes),
-        destinationLabel:safeLabel(result.destinationLabel,80),
+        destinationLabel:"Configured on gaming PC",
         requiresLocalDestinationApproval:true};
     },
 
@@ -164,7 +164,8 @@ function createHydraBridge(adapter) {
           downloaderId:safeDownloaderId,extract,deleteArchive }
         : { action, gameId: safeGameId, downloadId: safeDownloadId };
       const result = await adapter.command(payload);
-      if (!result || result.accepted !== true) {
+      if (!result || result.accepted !== true ||
+          (action==="queue" && result.localApproved!==true)) {
         throw new BridgeError("REJECTED", "Hydra did not accept the request");
       }
       return { accepted: true };
