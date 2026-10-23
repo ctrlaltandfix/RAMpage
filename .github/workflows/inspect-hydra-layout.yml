@@ -3,6 +3,8 @@ on:
   push:
     branches: [chatgpt-hydra-bridge-v1.6.8]
     paths: ['.github/workflows/inspect-hydra-layout.yml']
+  pull_request:
+    paths: ['.github/workflows/inspect-hydra-layout.yml']
   workflow_dispatch:
 permissions:
   contents: read
