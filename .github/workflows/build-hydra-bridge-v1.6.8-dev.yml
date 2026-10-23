@@ -31,6 +31,7 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           foreach($file in @('scripts/apply-hydra-bridge-v1.6.8.js','tests/hydra-bridge-production.test.js',
+      - 'tests/hydra-bridge-connected.test.js'
             'integrations/hydra/bridge.js','integrations/hydra/routes.js',
             'integrations/hydra/web-client.js','integrations/hydra/web-panel.js','integrations/hydra/companion-client.js')){
             node --check $file
@@ -75,7 +76,7 @@ jobs:
           node scripts/apply-hydra-bridge-v1.6.8.js $root
           if($LASTEXITCODE -ne 0){throw 'Production Hydra bridge patch failed'}
           $env:RAMPAGE_APP_ROOT=$root
-          node --test tests/hydra-bridge-production.test.js
+          node --test tests/hydra-bridge-production.test.js tests/hydra-bridge-connected.test.js
           if($LASTEXITCODE -ne 0){throw 'Real authenticated production RAMpage bridge tests failed'}
           $manifest=Join-Path $root 'package.json'
           $pkg=Get-Content $manifest -Raw | ConvertFrom-Json
