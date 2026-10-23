@@ -13,7 +13,7 @@ const bridge = createHydraBridge({
   async options(){return [{id:"opt:1",title:"Demo",source:"Publisher",sizeBytes:1024,uri:"secret"}];},
   async downloaders(){return {downloaders:[{id:"direct",label:"Direct",available:true,configured:true}],availableBytes:3000,destinationLabel:"PC downloads"};},
   async downloads() { return [{ id: "download:1", state: "paused", progress: 40, path: "no" }]; },
-  async command() { return { accepted: true }; },
+  async command() { return { accepted: true, localApproved: true }; },
 });
 const handler = createHydraRoutes({
   bridge,
