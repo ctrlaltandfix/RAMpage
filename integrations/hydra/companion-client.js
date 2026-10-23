@@ -74,7 +74,8 @@ function createHydraCompanionClient({baseUrl,token,fetchImpl=globalThis.fetch,ti
      if(!ACTIONS.has(action))throw new BridgeError('INVALID_INPUT','Unrecognised companion action');
      const result=await request('/v1/downloads/command',
        action==='queue'?{action,gameId,optionId,downloaderId,extract,deleteArchive}:{action,gameId,downloadId});
-     return {accepted:result.accepted===true};
+     return {accepted:result.accepted===true,
+       localApproved:action==='queue' && result.localApproved===true};
    },
  });
 }
