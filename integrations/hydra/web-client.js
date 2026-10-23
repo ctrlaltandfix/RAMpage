@@ -25,8 +25,12 @@ function createHydraWebClient({ csrfToken, fetchImpl = globalThis.fetch } = {}) 
   return Object.freeze({
     status: () => request("/status"),
     downloads: () => request("/downloads"),
+    options: (gameId) => request("/options?gameId=" + encodeURIComponent(gameId)),
+    downloaders: (gameId,optionId) =>
+      request("/downloaders?gameId="+encodeURIComponent(gameId)+"&optionId="+encodeURIComponent(optionId)),
     search: (title) => request("/search", { title }),
-    queue: (gameId, optionId) => request("/command", { action: "queue", gameId, optionId }),
+    queue: (gameId, optionId, downloaderId, extract = false, deleteArchive = false) =>
+      request("/command", { action: "queue", gameId, optionId, downloaderId, extract, deleteArchive }),
     pause: (gameId, downloadId) => request("/command", { action: "pause", gameId, downloadId }),
     resume: (gameId, downloadId) => request("/command", { action: "resume", gameId, downloadId }),
     cancel: (gameId, downloadId) => request("/command", { action: "cancel", gameId, downloadId }),
