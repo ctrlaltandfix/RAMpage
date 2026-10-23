@@ -13,8 +13,8 @@ test('actual packaged RAMpage source includes companion boundary and existing Hy
  assert.match(client,/window\.RAMpageHydraWebClient/);
  assert.match(client,/window\.RAMpageHydraDownloadPanel/);
  assert.match(client,/window\.rampageHydraBridgePanel\.destroy\(\)/);
- assert.match(server,/createHydraBridge\(null\)/);
- assert.match(server,/canManageDownloads:false/);
+ assert.match(server,/createHydraBridge\(this\.hydraCompanion\)/);
+ assert.match(server,/canManageDownloads:this\.hydraCompanion!==null/);
  assert.match(server,/req\.headers\['x-rampage-csrf'\]/);
  assert.match(server,/pathname\.startsWith\('\/api\/hydra\/bridge\/'\)/);
  assert.match(read('main.js'),/ipcMain\.handle\('hydra:draft-create'/);
