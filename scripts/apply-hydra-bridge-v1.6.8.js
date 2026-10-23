@@ -36,7 +36,7 @@ const serverInit=[
  "      });}catch{/* Stay disconnected; do not log local pairing tokens. */}",
  "    }",
  "    this.hydraBridgeRoute = createHydraRoutes({",
- "      bridge:createHydraBridge(this.hydraCompanion),"
+ "      bridge:createHydraBridge(this.hydraCompanion),",
  "      resolveSession:req=>{",
  "        const s=this.session(req);",
  "        return s?{authenticated:true,hydraEnabled:this.hydraDraftEnabled()===true,",
