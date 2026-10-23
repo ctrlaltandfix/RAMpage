@@ -1,11 +1,5 @@
 name: Hydra bridge security tests
 on:
-  push:
-    branches:
-      - chatgpt-hydra-bridge-v1.6.8
-    paths:
-      - 'integrations/hydra/**'
-      - '.github/workflows/hydra-bridge-tests.yml'
   pull_request:
     paths:
       - 'integrations/hydra/**'
@@ -31,7 +25,9 @@ jobs:
           node --check integrations/hydra/routes.js
           node --check integrations/hydra/web-client.js
           node --check integrations/hydra/web-panel.js
-          node --check integrations/hydra/web-panel.test.js
+          node --check integrations/hydra/companion-client.js
+          node --check integrations/hydra/companion-client.test.js
+          node --check integrations/hydra/web-panel.test.js integrations/hydra/companion-client.test.js
           node --check integrations/hydra/bridge.test.js
           node --check integrations/hydra/routes.test.js
       - name: Run Hydra bridge tests
