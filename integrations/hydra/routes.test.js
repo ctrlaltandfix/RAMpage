@@ -8,6 +8,7 @@ const { createHydraWebClient } = require("./web-client");
 
 const bridge = createHydraBridge({
   supported: true,
+  async ping() { return true; },
   async search({ title }) { return [{ id: "game:1", title, optionCount: 1, secret: "no" }]; },
   async downloads() { return [{ id: "download:1", state: "paused", progress: 40, path: "no" }]; },
   async command() { return { accepted: true }; },
