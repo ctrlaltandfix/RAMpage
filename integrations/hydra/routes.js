@@ -48,6 +48,14 @@ function createHydraRoutes({ bridge, resolveSession, verifyOrigin, verifyCsrf, c
         result = await bridge.status(context);
       } else if (req.method === "GET" && pathname === "/api/hydra/bridge/downloads") {
         result = await bridge.downloads(context);
+      } else if (req.method === "GET" && pathname === "/api/hydra/bridge/options") {
+        const url=new URL(req.url,"http://localhost");
+        result=await bridge.options(context,{gameId:url.searchParams.get("gameId")});
+      } else if (req.method === "GET" && pathname === "/api/hydra/bridge/downloaders") {
+        const url=new URL(req.url,"http://localhost");
+        result=await bridge.downloaders(context,{
+          gameId:url.searchParams.get("gameId"),optionId:url.searchParams.get("optionId")
+        });
       } else if (isPost && (pathname === "/api/hydra/bridge/search" ||
                              pathname === "/api/hydra/bridge/command" ||
                              pathname === "/api/hydra/bridge/install")) {
