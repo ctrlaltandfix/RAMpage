@@ -15,7 +15,7 @@ const companion = {
   async downloads() {
     return [{ id: "job-123", state: "downloading", progress: 52, path: "C:/secret", uri: "secret" }];
   },
-  async command(input) { return { accepted: true, echo: input, secret: "must not leak" }; },
+  async command(input) { return { accepted: true, localApproved:true, echo: input, secret: "must not leak" }; },
 };
 
 test("no companion means commands are unavailable", async () => {
@@ -69,7 +69,7 @@ test("game download options, downloader availability and disk info are redacted"
    {id:"option-1",title:"Official demo package",source:"Publisher",sizeBytes:1048576,publishedAt:"2026-10-23"}]);
  assert.deepEqual(await bridge.downloaders(allowed,{gameId:"steam:123",optionId:"option-1"}),{
    downloaders:[{id:"direct",label:"Authorized download",available:true,configured:true}],
-   availableBytes:2097152,destinationLabel:"PC downloads",requiresLocalDestinationApproval:true});
+   availableBytes:2097152,destinationLabel:"Configured on gaming PC",requiresLocalDestinationApproval:true});
  await assert.rejects(bridge.command(allowed,{action:"queue",gameId:"steam:123",optionId:"option-1",
    downloaderId:"direct",extract:false,deleteArchive:true}),{code:"INVALID_INPUT"});
  await assert.rejects(bridge.options(allowed,{gameId:"../path"}),{code:"INVALID_INPUT"});
