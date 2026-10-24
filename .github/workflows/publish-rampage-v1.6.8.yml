@@ -1,0 +1,139 @@
+name: Publish RAMpage v1.6.8 verified beta update
+
+on:
+  push:
+    branches: [chatgpt-hydra-bridge-v1.6.8]
+    paths: ['.github/workflows/publish-rampage-v1.6.8.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: rampage-v1.6.8-single-release
+  cancel-in-progress: false
+
+jobs:
+  publish-verified-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERIFIED_RUN: "39936612825"
+      VERIFIED_SHA: "b0a3c2e9282b7c7b434a9136f67e7e38fa56b0fb"
+      TAG: "v1.6.8"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tested build and fail closed on existing release
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Verifying Windows test build $VERIFIED_RUN"
+          outcome="$(gh api "repos/$GH_REPO/actions/runs/$VERIFIED_RUN" --jq .conclusion)"
+          tested="$(gh api "repos/$GH_REPO/actions/runs/$VERIFIED_RUN" --jq .head_sha)"
+          if [[ "$outcome" != "success" || "$tested" != "$VERIFIED_SHA" ]]; then
+            echo "Refusing to release: Windows build result or tested SHA mismatch"
+            exit 1
+          fi
+          # The exact tested source must not have changed before release.
+          git diff --quiet "$VERIFIED_SHA" HEAD -- \
+            integrations/hydra \
+            scripts/apply-hydra-bridge-v1.6.8.js \
+            scripts/apply-hydra-desktop-panel.js \
+            tests/hydra-bridge-production.test.js \
+            tests/hydra-bridge-connected.test.js \
+            .github/workflows/build-hydra-bridge-v1.6.8-dev.yml || {
+              echo "Application or test files changed since the verified build; refusing publication"
+              exit 1
+            }
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          if [[ "$latest" != "v1.6.7" ]]; then
+            echo "Unexpected latest release: $latest. Refusing to overwrite or downgrade."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; refusing overwrite."
+            exit 1
+          fi
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "Tag $TAG already exists; refusing overwrite."
+            exit 1
+          fi
+
+      - name: Download exactly the installer that passed Windows upgrade testing
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          gh run download "$VERIFIED_RUN" --repo "$GH_REPO" \
+            --name RAMpage-1.6.8-development-only-installer \
+            --dir release-files
+          test -s release-files/RAMpage-Setup-1.6.8.exe
+          test -s release-files/RAMpage-Setup-1.6.8.exe.sha256
+          size="$(stat -c %s release-files/RAMpage-Setup-1.6.8.exe)"
+          if (( size < 100000000 )); then
+            echo "Installer unexpectedly small: $size"
+            exit 1
+          fi
+          cd release-files
+          expected="$(awk '{ print $1; exit }' RAMpage-Setup-1.6.8.exe.sha256 | tr '[:upper:]' '[:lower:]')"
+          actual="$(sha256sum RAMpage-Setup-1.6.8.exe | cut -d' ' -f1)"
+          if [[ ! "$expected" =~ ^[0-9a-f]{64}$ || "$actual" != "$expected" ]]; then
+            echo "Installer SHA-256 mismatch; refusing to publish"
+            exit 1
+          fi
+          echo "Verified official development installer: $actual ($size bytes)"
+
+      - name: Publish latest RAMpage 1.6.8 Beta for the built-in updater
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            release-files/RAMpage-Setup-1.6.8.exe \
+            release-files/RAMpage-Setup-1.6.8.exe.sha256 \
+            --repo "$GH_REPO" \
+            --title "RAMpage 1.6.8 Beta" \
+            --notes-file docs/RELEASE-NOTES-v1.6.8.md \
+            --target "$VERIFIED_SHA" \
+            --latest
+          echo "Published https://github.com/$GH_REPO/releases/tag/$TAG"
+
+      - name: Verify latest-release updater feed and published SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          release=""
+          for attempt in {1..12}; do
+            release="$(gh api "repos/$GH_REPO/releases/latest")"
+            tag="$(echo "$release" | jq -r '.tag_name')"
+            if [[ "$tag" == "$TAG" ]]; then break; fi
+            sleep 5
+          done
+          [[ "$(echo "$release" | jq -r '.tag_name')" == "$TAG" ]] || {
+            echo "The updater's releases/latest feed does not point to v1.6.8"
+            exit 1
+          }
+          [[ "$(echo "$release" | jq -r '.draft')" == "false" ]] || exit 1
+          [[ "$(echo "$release" | jq -r '.prerelease')" == "false" ]] || {
+            echo "The in-app latest updater may skip a GitHub prerelease"
+            exit 1
+          }
+          for filename in RAMpage-Setup-1.6.8.exe RAMpage-Setup-1.6.8.exe.sha256; do
+            num="$(echo "$release" | jq --arg name "$filename" '[.assets[] | select(.name == $name and .state == "uploaded")] | length')"
+            if [[ "$num" != "1" ]]; then
+              echo "Missing or duplicated release asset $filename"
+              exit 1
+            fi
+          done
+          localHash="$(sha256sum release-files/RAMpage-Setup-1.6.8.exe | cut -d' ' -f1)"
+          remoteHash="$(echo "$release" | jq -r '.assets[] | select(.name == "RAMpage-Setup-1.6.8.exe") | .digest')"
+          [[ "$remoteHash" == "sha256:$localHash" ]] || {
+            echo "GitHub release asset digest mismatch"
+            exit 1
+          }
+          echo "PASS: latest updater feed, 1.6.8 executable, matching checksum and integrity verified."
