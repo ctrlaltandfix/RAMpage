@@ -1,0 +1,90 @@
+name: Build and publish RAMpage 1.0.1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/ai/**'
+      - 'scripts/apply-ai-v1.0.1.js'
+      - '.github/workflows/build-and-publish-v1.0.1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rampage-v1.0.1-release
+  cancel-in-progress: true
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download verified v1.0.0 baseline installer
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\previous" | Out-Null
+          gh release download v1.0.0 --pattern 'RAMpage-Setup-1.0.0.exe' --dir "$env:RUNNER_TEMP\previous"
+          if ($LASTEXITCODE -ne 0) { throw "Could not download official v1.0.0 installer" }
+
+      - name: Extract installed Electron application
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\previous-unpacked" | Out-Null
+          & 7z x '-y' "-o$env:RUNNER_TEMP\previous-unpacked" "$env:RUNNER_TEMP\previous\RAMpage-Setup-1.0.0.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Could not extract v1.0.0 installer" }
+          $candidates = @(Get-ChildItem -Path "$env:RUNNER_TEMP\previous-unpacked" -Recurse -File -Filter RAMpage.exe)
+          $appExe = $candidates | Where-Object { Test-Path (Join-Path $_.DirectoryName 'resources\app.asar') } | Select-Object -First 1
+          if (!$appExe) { throw "Installer does not expose an unpacked Electron app" }
+          New-Item -ItemType Directory -Force 'dist\win-unpacked' | Out-Null
+          Copy-Item -Path "$($appExe.DirectoryName)\*" -Destination 'dist\win-unpacked' -Recurse -Force
+
+      - name: Apply v1.0.1 AI enhancements and bump version
+        run: |
+          $src = "$env:RUNNER_TEMP\rampage-src"
+          npx --yes '@electron/asar@3.4.1' extract 'dist\win-unpacked\resources\app.asar' $src
+          if ($LASTEXITCODE -ne 0) { throw "Failed to unpack app.asar" }
+          node 'scripts/apply-ai-v1.0.1.js' $src
+          if ($LASTEXITCODE -ne 0) { throw "Failed to apply v1.0.1 patch" }
+          $pkgPath = Join-Path $src 'package.json'
+          $pkg = Get-Content $pkgPath -Raw | ConvertFrom-Json
+          $pkg.version = '1.0.1'
+          [System.IO.File]::WriteAllText($pkgPath, ($pkg | ConvertTo-Json -Depth 100))
+          npx --yes '@electron/asar@3.4.1' pack $src "$env:GITHUB_WORKSPACE\dist\win-unpacked\resources\app.asar"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to repack app.asar" }
+
+      - name: Compile RAMpage-Setup-1.0.1.exe with NSIS
+        run: |
+          choco install nsis --yes --no-progress
+          $nsis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (!(Test-Path $nsis)) { $nsis = (Get-Command makensis -ErrorAction Stop).Source }
+          $scriptText = Get-Content '.github/patches/rampage-0.2.5-installer.nsi' -Raw
+          $scriptText = $scriptText.Replace('..\..\dist\', 'dist\')
+          $scriptText = $scriptText.Replace('RAMpage-Setup-0.2.exe', 'RAMpage-Setup-1.0.1.exe')
+          $scriptText = $scriptText.Replace('0.2.5.0', '1.0.1.0')
+          $scriptText = $scriptText.Replace('0.2.5', '1.0.1')
+          $scriptText = $scriptText.Replace('0.2 Beta', '1.0.1')
+          [System.IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'rampage-setup.nsi'), $scriptText)
+          & $nsis -V3 -INPUTCHARSET UTF8 'rampage-setup.nsi'
+          if ($LASTEXITCODE -ne 0) { throw "NSIS compile failed" }
+          $exe = 'dist\RAMpage-Setup-1.0.1.exe'
+          if (!(Test-Path $exe) -or (Get-Item $exe).Length -lt 10000000) { throw "Installer invalid or incomplete" }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$exe.sha256", "$hash  RAMpage-Setup-1.0.1.exe" + [Environment]::NewLine)
+
+      - name: Upload installer and SHA256 to GitHub Release v1.0.1
+        run: |
+          gh release view v1.0.1 *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload v1.0.1 'dist/RAMpage-Setup-1.0.1.exe' 'dist/RAMpage-Setup-1.0.1.exe.sha256' --clobber
+            gh release edit v1.0.1 --title 'RAMpage 1.0.1' --notes-file 'releases/RELEASE-NOTES-v1.0.1.md' --latest
+          } else {
+            gh release create v1.0.1 'dist/RAMpage-Setup-1.0.1.exe' 'dist/RAMpage-Setup-1.0.1.exe.sha256' --title 'RAMpage 1.0.1' --notes-file 'releases/RELEASE-NOTES-v1.0.1.md' --target $env:GITHUB_SHA --latest
+          }
